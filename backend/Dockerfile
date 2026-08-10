@@ -1,6 +1,6 @@
-# Official Playwright Python image: Chromium and system deps included.
-# Pin major.minor close to requirements.txt (playwright>=1.45,<2.0).
-FROM mcr.microsoft.com/playwright/python:v1.51.0-jammy
+# Browsers in the image must match the installed playwright package version.
+# pip may pull a newer playwright than an outdated image tag → "Executable doesn't exist".
+FROM mcr.microsoft.com/playwright/python:v1.62.0-jammy
 
 WORKDIR /app
 
@@ -8,10 +8,12 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     APP_ENV=production \
     SQLITE_PATH=/app/data/analyses.db \
-    PORT=8000
+    PORT=8000 \
+    PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt \
+    && python -m playwright install chromium
 
 COPY app ./app
 COPY .env.example ./.env.example

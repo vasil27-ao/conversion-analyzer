@@ -4,7 +4,8 @@ pydantic>=2.7,<3.0
 pydantic-settings>=2.3,<3.0
 
 # сбор данных страницы (рендеринг, DOM/layout — без скриншотов)
-playwright>=1.45,<2.0
+# Pin to match backend/Dockerfile base image (mcr.microsoft.com/playwright/python:v1.62.0-*).
+playwright==1.62.0
 
 # LLM-агент (Gemini)
 google-genai>=1.0,<2.0
