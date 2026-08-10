@@ -1,0 +1,14 @@
+fastapi>=0.115,<1.0
+uvicorn[standard]>=0.30,<1.0
+pydantic>=2.7,<3.0
+pydantic-settings>=2.3,<3.0
+
+# сбор данных страницы (рендеринг, DOM/layout — без скриншотов)
+playwright>=1.45,<2.0
+
+# LLM-агент (Gemini)
+google-genai>=1.0,<2.0
+
+# для тестов
+pytest>=8.0,<9.0
+httpx>=0.27,<1.0

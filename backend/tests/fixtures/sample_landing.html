@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <title>Тестовый лендинг</title>
+    <style>
+      body {
+        margin: 0;
+        font-family: Arial, sans-serif;
+      }
+      .hero {
+        min-height: 100vh;
+        padding: 24px;
+      }
+      .cta {
+        display: inline-block;
+        padding: 12px 20px;
+        background: #0b5;
+        color: #fff;
+        text-decoration: none;
+      }
+      .mobile-only {
+        display: none;
+      }
+      @media (max-width: 600px) {
+        .desktop-cta {
+          display: none;
+        }
+        .mobile-only {
+          display: inline-block;
+        }
+        .hero {
+          min-height: 70vh;
+        }
+      }
+      section {
+        padding: 24px;
+      }
+      img {
+        width: 120px;
+        height: 80px;
+        background: #ddd;
+      }
+      label {
+        display: block;
+        margin-top: 8px;
+      }
+    </style>
+  </head>
+  <body>
+    <header class="hero">
+      <h1>Сервис расчёта стоимости ремонта</h1>
+      <p>Понятный расчёт сметы за 15 минут без выезда замерщика.</p>
+      <a class="cta desktop-cta" href="#form">Получить расчёт</a>
+      <a class="cta mobile-only" href="#form">Заявка с телефона</a>
+    </header>
+
+    <section id="benefits">
+      <h2>Что вы получаете</h2>
+      <ul>
+        <li>Прозрачная смета</li>
+        <li>Фиксация сроков</li>
+      </ul>
+    </section>
+
+    <section id="reviews">
+      <h2>Отзывы клиентов</h2>
+      <p>Реальные отзывы в виде скриншотов.</p>
+      <img src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==" alt="Скриншот отзыва 1" />
+      <img src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==" alt="Скриншот отзыва 2" />
+    </section>
+
+    <section id="works">
+      <h2>Наши работы</h2>
+      <img src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==" alt="Фото выполненного объекта" />
+    </section>
+
+    <section id="form">
+      <h2>Оставить заявку</h2>
+      <form action="/submit" method="post">
+        <label for="name">Имя</label>
+        <input id="name" name="name" type="text" required placeholder="Как к вам обращаться" />
+        <label for="phone">Телефон</label>
+        <input id="phone" name="phone" type="tel" required />
+        <button type="submit">Отправить заявку</button>
+      </form>
+    </section>
+
+    <footer>
+      <p>ООО «Тест» · +7 900 000-00-00</p>
+      <a href="https://example.com/reviews">Все отзывы на отдельной странице</a>
+    </footer>
+  </body>
+</html>
