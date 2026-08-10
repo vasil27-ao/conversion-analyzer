@@ -44,7 +44,7 @@
 
 Этап 5 (сборка и приёмка): **завершён**. `AGENT_IMPL=gemini`; полный E2E через frontend; три тестовые страницы разного качества с разными обоснованными оценками; ошибки недоступной страницы и сбоя агента обрабатываются без падения сервиса; standalone HTML-отчёт скачивается.
 
-Публикация: репозиторий на GitHub; frontend — Vercel (`VITE_API_BASE`); backend — Railway (Docker + Playwright Chromium), не Vercel. CORS задаётся через `CORS_ORIGINS`.
+Публикация: репозиторий https://github.com/vasil27-ao/conversion-analyzer; frontend — https://conversion-analyzer.vercel.app (`VITE_API_BASE`); backend — https://conversion-analyzer-production.up.railway.app (Docker + Playwright Chromium). CORS задаётся через `CORS_ORIGINS`.
 
 ## Область первой версии методики
 
