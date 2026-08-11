@@ -72,6 +72,12 @@
 - Решение: frontend деплоится на Vercel (Root Directory `frontend`, env `VITE_API_BASE`); backend — на Railway из `backend/Dockerfile` на базе `mcr.microsoft.com/playwright/python` (Chromium и системные зависимости уже в образе). CORS вынесен в `CORS_ORIGINS` (локальный Vite + URL Vercel). Секреты только в env хостинга / локальном `.env`, не в репозитории.
 - Статус: наше техническое решение публикации (зафиксировано командой).
 
+## 2026-08-11 — Запасной LLM OpenRouter/Qwen и failover без длинных ретраев
+
+- Контекст: Gemini free tier иногда отдаёт `503 UNAVAILABLE` (high demand); нужен бесплатный запасной вариант на русском до появления платного ключа заказчика.
+- Решение (наше техническое): при `AGENT_IMPL=gemini` и заданном `OPENROUTER_API_KEY` агент оборачивается в `FailoverAgentClient` — попытки `Gemini → OpenRouter (Qwen :free) → Gemini` только при временных ошибках API/невалидном JSON, без minute-sleep. Отдельный режим `AGENT_IMPL=openrouter`. Модель OpenRouter задаётся `OPENROUTER_MODEL` (дефолт `qwen/qwen3-32b:free`).
+- Статус: наше техническое решение (зафиксировано командой).
+
 ## 2026-08-11 — Ozon 403 / antibot (FAB) при сборе страницы
 
 - Контекст: `https://ozon.kz/...` на сервисе падал с «Страница недоступна (HTTP 403)». Причина: Ozon Fingerprint Antibot; `playwright.chromium.launch()` помечает сессию как автоматизацию, challenge не проходит; коллектор сразу считал HTTP 403 финальным отказом.
