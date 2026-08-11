@@ -7,12 +7,20 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import socket
+import subprocess
+import sys
+import tempfile
+import time
+from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, AsyncIterator
 from urllib.parse import urlparse
 
 from playwright.async_api import (
+    Browser,
     Error as PlaywrightError,
     TimeoutError as PlaywrightTimeoutError,
     async_playwright,
@@ -31,8 +39,18 @@ _EXTRACT_SCRIPT = (
 DESKTOP_VIEWPORT = {"width": 1280, "height": 800}
 MOBILE_VIEWPORT = {"width": 390, "height": 844}
 NAVIGATION_TIMEOUT_MS = 30_000
+# Сколько ждать авто-прохождения antibot-challenge (Ozon FAB и аналоги).
+CHALLENGE_WAIT_MS = 25_000
 # HTTP-коды, при которых страница считается недоступной для анализа.
-_UNAVAILABLE_STATUS_CODES = {401, 402, 403, 404, 407, 408, 410, 451}
+# 403 обрабатывается отдельно: часто это antibot challenge, а не финальный отказ.
+_UNAVAILABLE_STATUS_CODES = {401, 402, 404, 407, 408, 410, 451}
+_CHALLENGE_TEXT_MARKERS = (
+    "доступ ограничен",
+    "нет соединения",
+    "выключите vpn",
+    "fab_chlg",
+    "antibot challenge",
+)
 
 
 def _validate_url(url: str) -> str:
@@ -46,13 +64,107 @@ def _validate_url(url: str) -> str:
 
 def _is_auth_wall(page: Page, status: int | None) -> bool:
     """Грубая эвристика страницы, требующей авторизации."""
-    if status in {401, 403, 407}:
+    if status in {401, 407}:
         return True
     path = (urlparse(page.url).path or "").lower()
     auth_path_markers = ("/login", "/signin", "/sign-in", "/auth", "/account/login")
     if any(marker in path for marker in auth_path_markers):
         return True
     return False
+
+
+async def _page_visible_text(page: Page) -> str:
+    return await page.evaluate(
+        "() => (document.body && document.body.innerText) || ''"
+    )
+
+
+async def _is_challenge_page(page: Page) -> bool:
+    """Страница antibot/FAB challenge, которую ещё нельзя считать итогом загрузки."""
+    title = (await page.title()).lower()
+    text = (await _page_visible_text(page)).lower()
+    if "antibot" in title:
+        return True
+    return any(marker in text for marker in _CHALLENGE_TEXT_MARKERS)
+
+
+async def _wait_out_challenge(page: Page) -> None:
+    """Ждёт, пока antibot JS завершит challenge (или истечёт таймаут)."""
+    deadline = time.perf_counter() + CHALLENGE_WAIT_MS / 1000
+    while time.perf_counter() < deadline:
+        if not await _is_challenge_page(page):
+            return
+        await page.wait_for_timeout(500)
+
+
+def _free_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
+@asynccontextmanager
+async def _connect_chromium_over_cdp(playwright: Any) -> AsyncIterator[Browser]:
+    """
+    Запускает Chromium вне Playwright launch и подключается по CDP.
+
+    Playwright.chromium.launch() выставляет automation-флаги, из-за которых
+    сайты вроде Ozon (FAB) отвечают HTTP 403 и не пропускают challenge.
+    Голый Chromium + connect_over_cdp challenge проходит.
+    """
+    port = _free_port()
+    profile = tempfile.TemporaryDirectory(prefix="pw-cdp-")
+    exe = playwright.chromium.executable_path
+    cmd = [
+        exe,
+        f"--remote-debugging-port={port}",
+        f"--user-data-dir={profile.name}",
+        "--disable-blink-features=AutomationControlled",
+        "--no-first-run",
+        "--no-default-browser-check",
+        "--headless=new",
+        "--no-sandbox",
+        "--disable-dev-shm-usage",
+        f"--window-size={DESKTOP_VIEWPORT['width']},{DESKTOP_VIEWPORT['height']}",
+        "about:blank",
+    ]
+    creationflags = 0
+    if sys.platform == "win32":
+        creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
+    proc = subprocess.Popen(
+        cmd,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        creationflags=creationflags,
+    )
+    browser: Browser | None = None
+    last_error: BaseException | None = None
+    try:
+        for _ in range(40):
+            try:
+                browser = await playwright.chromium.connect_over_cdp(
+                    f"http://127.0.0.1:{port}"
+                )
+                break
+            except Exception as exc:  # noqa: BLE001 — ждём готовности порта
+                last_error = exc
+                await asyncio.sleep(0.25)
+        if browser is None:
+            raise PageUnavailableError(
+                "Не удалось запустить браузер для сбора страницы."
+            ) from last_error
+        try:
+            yield browser
+        finally:
+            await browser.close()
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except Exception:  # noqa: BLE001
+            proc.kill()
+        profile.cleanup()
 
 
 async def _extract_layout(page: Page) -> LayoutSnapshot:
@@ -77,6 +189,18 @@ async def _goto(page: Page, url: str) -> int | None:
         ) from exc
 
     status = response.status if response is not None else None
+
+    # Ozon FAB и похожие antibot: первый ответ часто 403 + challenge page,
+    # затем JS догружает контент. Нельзя сразу трактовать 403 как отказ.
+    if status == 403 or await _is_challenge_page(page):
+        await _wait_out_challenge(page)
+        if await _is_challenge_page(page):
+            raise PageUnavailableError(
+                f"Страница недоступна (HTTP {status or 403}): {url}"
+            )
+        # Challenge пройден — исходный 403 больше не считаем финальным статусом.
+        status = None
+
     if status is not None and status in _UNAVAILABLE_STATUS_CODES:
         raise PageUnavailableError(
             f"Страница недоступна (HTTP {status}): {url}"
@@ -122,16 +246,20 @@ async def collect_page_data(url: str) -> PageData:
     """
     target_url = _validate_url(url)
     logger.info("Collecting page data for %s", target_url)
+    collect_started = time.perf_counter()
+    page_load_s: float | None = None
+    extract_s: float | None = None
 
     try:
         async with async_playwright() as playwright:
-            browser = await playwright.chromium.launch(headless=True)
-            try:
+            async with _connect_chromium_over_cdp(playwright) as browser:
                 context = await browser.new_context(
                     viewport=DESKTOP_VIEWPORT,
                     java_script_enabled=True,
+                    locale="ru-RU",
                 )
                 page = await context.new_page()
+                load_started = time.perf_counter()
                 await _goto(page, target_url)
 
                 # Дать отработать короткой отложенной отрисовке после DOMContentLoaded.
@@ -144,21 +272,41 @@ async def collect_page_data(url: str) -> PageData:
                         "networkidle wait timed out for %s; continuing with current DOM",
                         target_url,
                     )
+                page_load_s = time.perf_counter() - load_started
+                logger.info(
+                    "Timing page_load url=%s page_load_s=%.3f",
+                    target_url,
+                    page_load_s,
+                )
 
+                extract_started = time.perf_counter()
                 html = await page.content()
                 visible_text = await page.evaluate(
                     "() => (document.body && document.body.innerText) || ''"
                 )
+                desktop_started = time.perf_counter()
                 layout_desktop = await _extract_layout(page)
+                desktop_layout_s = time.perf_counter() - desktop_started
+                logger.info(
+                    "Timing desktop_layout url=%s desktop_layout_s=%.3f",
+                    target_url,
+                    desktop_layout_s,
+                )
 
                 await page.set_viewport_size(MOBILE_VIEWPORT)
                 # Пересчёт layout после media-query; без ухода на другой URL.
                 await page.wait_for_timeout(300)
+                mobile_started = time.perf_counter()
                 layout_mobile = await _extract_layout(page)
+                mobile_layout_s = time.perf_counter() - mobile_started
+                logger.info(
+                    "Timing mobile_layout url=%s mobile_layout_s=%.3f",
+                    target_url,
+                    mobile_layout_s,
+                )
+                extract_s = time.perf_counter() - extract_started
 
                 final_url = page.url
-            finally:
-                await browser.close()
     except PageUnavailableError:
         raise
     except PlaywrightError as exc:
@@ -180,11 +328,19 @@ async def collect_page_data(url: str) -> PageData:
         layout_desktop=layout_desktop,
         layout_mobile=layout_mobile,
     )
+    collect_total_s = time.perf_counter() - collect_started
     logger.info(
         "Collected page data for %s (headings=%s, forms=%s, named_blocks=%s)",
         final_url,
         len(layout_desktop.headings),
         len(layout_desktop.forms),
         len(layout_desktop.named_blocks),
+    )
+    logger.info(
+        "Timing collect url=%s page_load_s=%.3f extract_s=%.3f collect_total_s=%.3f",
+        final_url,
+        page_load_s if page_load_s is not None else -1.0,
+        extract_s if extract_s is not None else -1.0,
+        collect_total_s,
     )
     return page_data
