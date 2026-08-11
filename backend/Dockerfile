@@ -9,7 +9,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     APP_ENV=production \
     SQLITE_PATH=/app/data/analyses.db \
     PORT=8000 \
-    PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+    PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
+    PLAYWRIGHT_CHROMIUM_USE_HEADLESS_SHELL=0
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt \

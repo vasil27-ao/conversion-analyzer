@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import socket
 import subprocess
 import sys
@@ -91,9 +92,18 @@ async def _is_challenge_page(page: Page) -> bool:
 async def _wait_out_challenge(page: Page) -> None:
     """Ждёт, пока antibot JS завершит challenge (или истечёт таймаут)."""
     deadline = time.perf_counter() + CHALLENGE_WAIT_MS / 1000
+    reloaded = False
     while time.perf_counter() < deadline:
         if not await _is_challenge_page(page):
             return
+        # Иногда FAB просит «Обновить страницу» — один мягкий reload помогает.
+        remaining_ms = (deadline - time.perf_counter()) * 1000
+        if not reloaded and remaining_ms < CHALLENGE_WAIT_MS * 0.55:
+            reloaded = True
+            try:
+                await page.reload(wait_until="domcontentloaded", timeout=NAVIGATION_TIMEOUT_MS)
+            except PlaywrightError:
+                logger.debug("Challenge reload failed; continuing wait", exc_info=True)
         await page.wait_for_timeout(500)
 
 
@@ -101,6 +111,33 @@ def _free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.bind(("127.0.0.1", 0))
         return int(sock.getsockname()[1])
+
+
+def _chromium_browser_executable(playwright: Any) -> str:
+    """
+    Полный Chromium (chrome), не chrome-headless-shell.
+
+    Headless shell чаще режется antibot; для CDP нужен обычный chrome.
+    """
+    # В новых Playwright executable_path может указывать на headless shell.
+    os.environ.setdefault("PLAYWRIGHT_CHROMIUM_USE_HEADLESS_SHELL", "0")
+    exe = Path(playwright.chromium.executable_path)
+    if "headless" not in exe.name.lower():
+        return str(exe)
+
+    search_roots = [exe.parent, exe.parent.parent]
+    for root in search_roots:
+        for name in ("chrome", "chrome.exe", "chromium", "chromium.exe"):
+            candidate = root / name
+            if candidate.is_file():
+                return str(candidate)
+        for candidate in root.rglob("chrome"):
+            if candidate.is_file() and "headless" not in candidate.name.lower():
+                return str(candidate)
+        for candidate in root.rglob("chrome.exe"):
+            if candidate.is_file():
+                return str(candidate)
+    return str(exe)
 
 
 @asynccontextmanager
@@ -113,8 +150,13 @@ async def _connect_chromium_over_cdp(playwright: Any) -> AsyncIterator[Browser]:
     Голый Chromium + connect_over_cdp challenge проходит.
     """
     port = _free_port()
-    profile = tempfile.TemporaryDirectory(prefix="pw-cdp-")
-    exe = playwright.chromium.executable_path
+    # ignore_cleanup_errors: Chromium может ещё держать файлы профиля на Linux.
+    profile = tempfile.TemporaryDirectory(
+        prefix="pw-cdp-",
+        ignore_cleanup_errors=True,
+    )
+    exe = _chromium_browser_executable(playwright)
+    logger.info("Launching Chromium over CDP executable=%s", exe)
     cmd = [
         exe,
         f"--remote-debugging-port={port}",
@@ -125,9 +167,14 @@ async def _connect_chromium_over_cdp(playwright: Any) -> AsyncIterator[Browser]:
         "--headless=new",
         "--no-sandbox",
         "--disable-dev-shm-usage",
+        "--disable-gpu",
         f"--window-size={DESKTOP_VIEWPORT['width']},{DESKTOP_VIEWPORT['height']}",
         "about:blank",
     ]
+    proxy_server = (os.environ.get("COLLECTOR_PROXY_SERVER") or "").strip()
+    if proxy_server:
+        cmd.insert(-1, f"--proxy-server={proxy_server}")
+        logger.info("Collector Chromium uses COLLECTOR_PROXY_SERVER")
     creationflags = 0
     if sys.platform == "win32":
         creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
@@ -164,6 +211,10 @@ async def _connect_chromium_over_cdp(playwright: Any) -> AsyncIterator[Browser]:
             proc.wait(timeout=5)
         except Exception:  # noqa: BLE001
             proc.kill()
+            try:
+                proc.wait(timeout=3)
+            except Exception:  # noqa: BLE001
+                pass
         profile.cleanup()
 
 
@@ -195,6 +246,24 @@ async def _goto(page: Page, url: str) -> int | None:
     if status == 403 or await _is_challenge_page(page):
         await _wait_out_challenge(page)
         if await _is_challenge_page(page):
+            title = await page.title()
+            text_preview = (await _page_visible_text(page))[:240]
+            logger.warning(
+                "Antibot challenge unresolved url=%s http=%s title=%r text=%r",
+                url,
+                status,
+                title,
+                text_preview,
+            )
+            text_low = text_preview.lower()
+            if any(
+                marker in text_low
+                for marker in ("нет соединения", "выключите vpn", "fab_chlg")
+            ):
+                raise PageUnavailableError(
+                    "Сайт ограничил доступ к странице (защита от ботов). "
+                    f"Попробуйте другую ссылку или повторите позже: {url}"
+                )
             raise PageUnavailableError(
                 f"Страница недоступна (HTTP {status or 403}): {url}"
             )
