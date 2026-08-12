@@ -7,8 +7,9 @@ pydantic-settings>=2.3,<3.0
 # Pin to match backend/Dockerfile base image (mcr.microsoft.com/playwright/python:v1.62.0-*).
 playwright==1.62.0
 
-# LLM-агент (Gemini)
+# LLM-агент (Gemini) + очистка HTML для промпта
 google-genai>=1.0,<2.0
+beautifulsoup4>=4.12,<5.0
 
 # для тестов
 pytest>=8.0,<9.0

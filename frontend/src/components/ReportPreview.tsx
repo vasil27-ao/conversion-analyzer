@@ -10,7 +10,7 @@ const PREVIEW_BLOCKS = [
 ];
 
 const PREVIEW_BACKLOG = [
-  { task: "Поднять CTA в первый экран на mobile", priority: "высокий" },
+  { task: "Поднять CTA в первый экран на мобильной версии", priority: "высокий" },
   { task: "Сократить поля формы и пояснить назначение", priority: "высокий" },
   { task: "Усилить контакты в футере", priority: "средний" },
 ];
@@ -19,10 +19,7 @@ export function ReportPreview() {
   return (
     <aside className="report-preview" aria-label="Пример структуры отчёта">
       <div className="report-preview-head">
-        <p className="eyebrow">
-          <span className="eyebrow-index">03</span>
-          Пример отчёта
-        </p>
+        <p className="eyebrow">Пример отчёта</p>
         <div className="preview-score-row">
           <div>
             <p className="micro-label">Общая оценка</p>

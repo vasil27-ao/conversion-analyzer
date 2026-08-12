@@ -40,6 +40,9 @@ export function presentClientText(text: string): string {
     [/\bbacklog\b/gi, "план работ"],
     [/\bна mobile\b/gi, "на мобильной версии"],
     [/\bmobile\b/gi, "мобильная версия"],
+    [/\bна desktop\b/gi, "на компьютере"],
+    [/\bdesktop\b/gi, "компьютер"],
+    [/\bmock\b/gi, "проверка"],
   ];
 
   for (const [pattern, replacement] of replacements) {
@@ -51,6 +54,27 @@ export function presentClientText(text: string): string {
     .replace(/\s{2,}/g, " ")
     .replace(/\s+,/g, ",")
     .trim();
+}
+
+/** Технические тексты ошибок API → формулировки для клиента (без имён провайдеров). */
+export function presentClientError(message: string): string {
+  const value = (message || "").trim();
+  if (!value) {
+    return "Не удалось выполнить анализ. Попробуйте ещё раз.";
+  }
+  if (/code\s*=\s*429|RESOURCE_EXHAUSTED|too many requests|quota/i.test(value)) {
+    return (
+      "Сейчас слишком много запросов к сервису анализа. " +
+      "Подождите 1–2 минуты и попробуйте снова."
+    );
+  }
+  if (/code\s*=\s*\d+/i.test(value) || /\bAPI\b/i.test(value)) {
+    return "Сервис анализа временно недоступен. Попробуйте позже.";
+  }
+  if (/backend|Playwright|LLM|Gemini|OpenAI|Anthropic/i.test(value)) {
+    return "Не удалось выполнить анализ страницы. Попробуйте ещё раз.";
+  }
+  return value;
 }
 
 /** Короткое пояснение шкалы и итоговой 100-балльной оценки (как считает backend). */

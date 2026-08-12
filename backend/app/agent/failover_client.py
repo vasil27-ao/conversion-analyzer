@@ -1,13 +1,13 @@
 """
-Запасной AgentClient: чередует primary/fallback при временных сбоях API.
+Запасной AgentClient: цепочка провайдеров при временных сбоях API.
 
-Без длинных sleep: при 503/перегрузке сразу пробуем другой провайдер,
-чтобы не крутить ретраи в один и тот же лимит.
+Без длинных sleep: при 503/перегрузке сразу следующий провайдер.
 """
 
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 
 from app.agent.common import is_transient_agent_error
 from app.agent.errors import AgentClientError
@@ -20,34 +20,42 @@ logger = logging.getLogger(__name__)
 
 class FailoverAgentClient(AgentClient):
     """
-    Порядок попыток (макс. 3):
-    1) primary (Gemini)
-    2) fallback (OpenRouter/Qwen) при временной ошибке
-    3) ещё раз primary при временной ошибке fallback
+    Пробует провайдеров по порядку один раз каждый.
+
+    Пример: Gemini primary → Gemini secondary → OpenRouter → Groq.
     """
 
     def __init__(
         self,
-        primary: AgentClient,
-        fallback: AgentClient,
+        providers: Sequence[tuple[str, AgentClient]] | None = None,
         *,
+        primary: AgentClient | None = None,
+        fallback: AgentClient | None = None,
         primary_name: str = "primary",
         fallback_name: str = "fallback",
     ) -> None:
-        self._primary = primary
-        self._fallback = fallback
-        self._primary_name = primary_name
-        self._fallback_name = fallback_name
+        if providers is not None:
+            chain = [(str(name), client) for name, client in providers]
+        elif primary is not None and fallback is not None:
+            # Обратная совместимость со старым API primary/fallback + retry primary.
+            chain = [
+                (primary_name, primary),
+                (fallback_name, fallback),
+                (primary_name, primary),
+            ]
+        else:
+            raise ValueError(
+                "FailoverAgentClient: передайте providers=[...] "
+                "или пару primary/fallback."
+            )
+        if len(chain) < 2:
+            raise ValueError("FailoverAgentClient: нужно минимум 2 провайдера.")
+        self._providers = chain
 
     async def analyze(self, page_data: PageData) -> LlmAgentResult:
-        sequence: list[tuple[str, AgentClient]] = [
-            (self._primary_name, self._primary),
-            (self._fallback_name, self._fallback),
-            (self._primary_name, self._primary),
-        ]
         last_error: AgentClientError | None = None
 
-        for attempt, (name, client) in enumerate(sequence, start=1):
+        for attempt, (name, client) in enumerate(self._providers, start=1):
             try:
                 logger.info(
                     "Failover attempt=%s provider=%s url=%s",
@@ -58,7 +66,7 @@ class FailoverAgentClient(AgentClient):
                 return await client.analyze(page_data)
             except AgentClientError as exc:
                 last_error = exc
-                if attempt >= len(sequence) or not is_transient_agent_error(exc):
+                if attempt >= len(self._providers) or not is_transient_agent_error(exc):
                     raise
                 logger.warning(
                     "Provider %s failed transiently (attempt=%s); switching. error=%s",

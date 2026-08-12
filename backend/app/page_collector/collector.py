@@ -33,8 +33,23 @@ from app.page_collector.models import LayoutSnapshot, PageData
 
 logger = logging.getLogger(__name__)
 
-_EXTRACT_SCRIPT = (
+_VISIBILITY_SCRIPT = (
+    Path(__file__).with_name("visibility.js").read_text(encoding="utf-8")
+)
+_EXTRACT_LAYOUT_BODY = (
     Path(__file__).with_name("extract_layout.js").read_text(encoding="utf-8")
+)
+# visibility helpers + layout extractor в одном evaluate-контексте.
+_EXTRACT_SCRIPT = _VISIBILITY_SCRIPT + "\n" + _EXTRACT_LAYOUT_BODY
+_VISIBLE_TEXT_SCRIPT = (
+    _VISIBILITY_SCRIPT
+    + "\n() => (typeof collectVisibleText === 'function' "
+    + "? collectVisibleText(document.body) : '')"
+)
+_HTML_WITH_MARKS_SCRIPT = (
+    _VISIBILITY_SCRIPT
+    + "\n() => (typeof collectHtmlWithInvisibleMarks === 'function' "
+    + "? collectHtmlWithInvisibleMarks() : document.documentElement.outerHTML)"
 )
 
 DESKTOP_VIEWPORT = {"width": 1280, "height": 800}
@@ -75,9 +90,12 @@ def _is_auth_wall(page: Page, status: int | None) -> bool:
 
 
 async def _page_visible_text(page: Page) -> str:
-    return await page.evaluate(
-        "() => (document.body && document.body.innerText) || ''"
-    )
+    return await page.evaluate(_VISIBLE_TEXT_SCRIPT)
+
+
+async def _page_html(page: Page) -> str:
+    """HTML после JS с пометкой невидимых поддеревьев для LLM-skeleton."""
+    return await page.evaluate(_HTML_WITH_MARKS_SCRIPT)
 
 
 async def _is_challenge_page(page: Page) -> bool:
@@ -349,10 +367,8 @@ async def collect_page_data(url: str) -> PageData:
                 )
 
                 extract_started = time.perf_counter()
-                html = await page.content()
-                visible_text = await page.evaluate(
-                    "() => (document.body && document.body.innerText) || ''"
-                )
+                html = await _page_html(page)
+                visible_text = await _page_visible_text(page)
                 desktop_started = time.perf_counter()
                 layout_desktop = await _extract_layout(page)
                 desktop_layout_s = time.perf_counter() - desktop_started

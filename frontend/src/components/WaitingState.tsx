@@ -13,26 +13,24 @@ const STATUS_TEXT: Record<"pending" | "running", string> = {
 export function WaitingState({ url, status }: WaitingStateProps) {
   const title =
     status === "pending" || status === "running" ? STATUS_TEXT[status] : "Ожидание результата";
-  const phase = status === "pending" ? "01" : "02";
+  const phase = status === "pending" ? 1 : 2;
 
   return (
     <section className="state waiting" aria-live="polite">
       <div className="state-rail" aria-hidden="true">
-        <span className={`rail-dot ${phase >= "01" ? "is-on" : ""}`} />
+        <span className={`rail-dot ${phase >= 1 ? "is-on" : ""}`} />
         <span className="rail-line" />
-        <span className={`rail-dot ${phase >= "02" ? "is-on" : ""}`} />
+        <span className={`rail-dot ${phase >= 2 ? "is-on" : ""}`} />
         <span className="rail-line" />
         <span className="rail-dot" />
       </div>
-      <p className="eyebrow">
-        <span className="eyebrow-index">{phase}</span>
-        В процессе
-      </p>
+      <p className="eyebrow">В процессе</p>
       <h1>{title}</h1>
       <p className="status-url">{url}</p>
       <p className="lede">
-        Собираем данные страницы и оцениваем её по 6 блокам методики. Вкладку можно не
-        закрывать — отчёт появится здесь.
+        Собираем данные страницы и оцениваем её по 6 блокам методики. Анализ обычно занимает
+        1–2 минуты, сложные страницы могут занять больше времени. Вкладку можно не закрывать —
+        отчёт появится здесь.
       </p>
       <div className="waiting-bar" aria-hidden="true">
         <span />

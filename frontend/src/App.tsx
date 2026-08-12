@@ -88,7 +88,7 @@ export default function App() {
         const message =
           error instanceof ApiError
             ? error.message
-            : "Не удалось получить статус анализа. Проверьте, что backend запущен.";
+            : "Не удалось получить статус анализа. Проверьте интернет и попробуйте ещё раз.";
         setScreen({ kind: "failed", url: waitingUrl, message });
       }
     };
@@ -124,7 +124,7 @@ export default function App() {
       const message =
         error instanceof ApiError
           ? error.message
-          : "Не удалось запустить анализ. Проверьте, что backend запущен.";
+          : "Не удалось запустить анализ. Проверьте интернет и попробуйте ещё раз.";
       setFormError(message);
     } finally {
       setSubmitting(false);
@@ -154,10 +154,7 @@ export default function App() {
         {screen.kind === "form" ? (
           <section className="start">
             <div className="start-intro">
-              <p className="eyebrow">
-                <span className="eyebrow-index">01</span>
-                Рабочий инструмент оценки конверсии
-              </p>
+              <p className="eyebrow">Рабочий инструмент оценки конверсии</p>
               <div className="start-intro-row">
                 <h1>
                   Разберите страницу

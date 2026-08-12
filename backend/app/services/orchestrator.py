@@ -8,6 +8,7 @@ collect_page_data → AgentClient → assemble_agent_result → AnalysisReposito
 from __future__ import annotations
 
 import logging
+import time
 import uuid
 from datetime import datetime, timezone
 from typing import Awaitable, Callable, Optional
@@ -45,12 +46,12 @@ def _user_error_message(exc: BaseException) -> str:
     if isinstance(exc, PageCollectionError):
         return str(exc) or "Не удалось собрать данные страницы."
     if isinstance(exc, AgentClientError):
-        return str(exc) or "Ошибка при обращении к агенту-аналитику."
+        return str(exc) or "Не удалось выполнить анализ страницы. Попробуйте ещё раз."
     if isinstance(exc, AgentResponseValidationError):
-        return f"Ответ агента не прошёл проверку методики: {exc}"
+        return "Не удалось сформировать отчёт по методике. Попробуйте ещё раз."
     if isinstance(exc, OverallCalculationError):
-        return f"Не удалось рассчитать оценку страницы: {exc}"
-    return "Анализ прервался из-за внутренней ошибки."
+        return "Не удалось рассчитать оценку страницы. Попробуйте ещё раз."
+    return "Анализ прервался из-за внутренней ошибки. Попробуйте ещё раз."
 
 
 class AnalysisOrchestrator:
@@ -93,6 +94,7 @@ class AnalysisOrchestrator:
         analysis = analysis.model_copy(update={"status": AnalysisStatus.RUNNING})
         await self._repository.save(analysis)
         logger.info("Analysis id=%s status=running", analysis.id)
+        process_started = time.perf_counter()
 
         try:
             page_data = await self._collect(str(analysis.url))
@@ -106,18 +108,32 @@ class AnalysisOrchestrator:
                 }
             )
             await self._repository.save(analysis)
+            total_s = time.perf_counter() - process_started
             logger.info(
                 "Analysis id=%s status=done score=%s",
                 analysis.id,
                 agent_result.overall.score,
             )
+            logger.info(
+                "Timing total id=%s url=%s total_s=%.3f",
+                analysis.id,
+                analysis.url,
+                total_s,
+            )
             return analysis
         except Exception as exc:  # noqa: BLE001 — фиксируем failed и не роняем оркестратор
             message = _user_error_message(exc)
+            total_s = time.perf_counter() - process_started
             logger.exception(
                 "Analysis id=%s failed: %s",
                 analysis.id,
                 type(exc).__name__,
+            )
+            logger.info(
+                "Timing total id=%s url=%s total_s=%.3f status=failed",
+                analysis.id,
+                analysis.url,
+                total_s,
             )
             analysis = analysis.model_copy(
                 update={

@@ -123,3 +123,34 @@ def test_collect_page_data_detects_soft_named_blocks_without_h_tags(local_site_u
         image.named_block and "Отзывы" in image.named_block
         for image in page_data.layout_desktop.images
     )
+
+
+def test_collect_excludes_hidden_and_collapsed_reviews_from_visible_data(local_site_url: str):
+    hidden_url = local_site_url.rsplit("/", 1)[0] + "/hidden_reviews_landing.html"
+    page_data = asyncio.run(collect_page_data(hidden_url))
+
+    text = page_data.visible_text.lower()
+    assert "visible offer" in text
+    assert "contacts visible" in text
+    assert "reviews for women's strider" not in text
+    assert "secret review text" not in text
+    assert "hidden attribute reviews" not in text
+    assert "aria hidden reviews" not in text
+
+    # В сыром HTML скрытое может остаться (с маркером коллектора) — это ок.
+    assert "Reviews for Women's Strider" in page_data.html
+    assert "data-collector-invisible" in page_data.html
+
+    from app.agent.common import prepare_html_for_llm
+
+    llm_html, _, _ = prepare_html_for_llm(page_data.html)
+    assert "Reviews for Women's Strider" not in llm_html
+    assert "Secret review text" not in llm_html
+
+    review_blocks = [
+        b for b in page_data.layout_desktop.named_blocks if b.kind == "reviews"
+    ]
+    assert review_blocks == []
+    assert not any(
+        "review" in (h.text or "").lower() for h in page_data.layout_desktop.headings
+    )

@@ -4,17 +4,13 @@ import { ScoreBadge } from "./ScoreBadge";
 
 interface BlockSectionProps {
   block: BlockResult;
-  index: number;
 }
 
-export function BlockSection({ block, index }: BlockSectionProps) {
-  const number = String(index + 1).padStart(2, "0");
-
+export function BlockSection({ block }: BlockSectionProps) {
   return (
     <article className="block">
       <header className="block-header">
         <div className="block-title">
-          <p className="block-index">{number}</p>
           <h3>{block.block_name}</h3>
         </div>
         <div className="block-score">

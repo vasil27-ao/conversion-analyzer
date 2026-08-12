@@ -19,7 +19,7 @@ pip install -r requirements.txt
 python -m playwright install chromium
 copy .env.example .env
 # заполнить GEMINI_API_KEY; AGENT_IMPL=gemini
-# опционально OPENROUTER_API_KEY — запасной бесплатный Qwen при сбое Gemini
+# опционально OPENROUTER_API_KEY / GROQ_API_KEY — запасные free LLM при сбое Gemini
 
 uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
@@ -35,8 +35,11 @@ CORS по умолчанию разрешён для локального Vite (
 3. Задайте переменные окружения:
    - `GEMINI_API_KEY` — секрет
    - `AGENT_IMPL=gemini`
-   - `OPENROUTER_API_KEY` — опционально, бесплатный запасной LLM (ключ на https://openrouter.ai/keys)
-   - `OPENROUTER_MODEL=qwen/qwen3-32b:free` — при необходимости смените на актуальный `:free` в каталоге OpenRouter
+   - `GEMINI_MODEL_FALLBACK=gemini-2.5-flash` — вторая free Gemini в ротации
+   - `OPENROUTER_API_KEY` — опционально, запасной LLM (https://openrouter.ai/keys)
+   - `OPENROUTER_MODEL=google/gemma-4-31b-it:free` — актуальный `:free` slug
+   - `GROQ_API_KEY` — опционально, третий free LLM (https://console.groq.com/keys)
+   - `GROQ_MODEL=llama-3.3-70b-versatile`
    - `APP_ENV=production`
    - `CORS_ORIGINS` — локальные origins + `https://<ваш-frontend>.vercel.app`
    - `SQLITE_PATH=/app/data/analyses.db` (уже в Dockerfile)

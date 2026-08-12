@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html>
+<head><title>Visibility fixture</title></head>
+<body>
+  <h1>Visible offer</h1>
+  <p>Buy now with confidence</p>
+  <a href="/order">Get quote</a>
+
+  <div style="display:none">
+    <h2>Reviews for Hidden Product</h2>
+    <p>Secret review text should not appear</p>
+  </div>
+
+  <div hidden>
+    <h2>Hidden attribute reviews</h2>
+  </div>
+
+  <div aria-hidden="true">
+    <h2>Aria hidden reviews</h2>
+  </div>
+
+  <section class="collapsed-widget" style="position:relative; height:0; width:100%;">
+    <h2 style="position:absolute; top:0; left:0; width:100%;">Reviews for Women's Strider</h2>
+  </section>
+
+  <footer>Contacts visible</footer>
+</body>
+</html>

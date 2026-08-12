@@ -23,10 +23,7 @@ export function ReportView({ analysisId, url, result, onNewAnalysis }: ReportVie
     <section className="report">
       <header className="report-hero">
         <div className="report-hero-copy">
-          <p className="eyebrow">
-            <span className="eyebrow-index">03</span>
-            Готовый отчёт
-          </p>
+          <p className="eyebrow">Готовый отчёт</p>
           <h1>Общая оценка страницы</h1>
           <p className="status-url">{url}</p>
           <p className="summary">{presentClientText(overall.summary)}</p>
@@ -58,17 +55,14 @@ export function ReportView({ analysisId, url, result, onNewAnalysis }: ReportVie
       <section className="report-section">
         <div className="section-heading">
           <div>
-            <p className="eyebrow">
-              <span className="eyebrow-index">04</span>
-              Методика
-            </p>
+            <p className="eyebrow">Методика</p>
             <h2>Оценка по блокам</h2>
           </div>
         </div>
         <p className="scale-note">{SCORE_SCALE_EXPLANATION}</p>
         <div className="blocks">
-          {result.blocks.map((block, index) => (
-            <BlockSection key={block.block_id} block={block} index={index} />
+          {result.blocks.map((block) => (
+            <BlockSection key={block.block_id} block={block} />
           ))}
         </div>
       </section>
@@ -76,10 +70,7 @@ export function ReportView({ analysisId, url, result, onNewAnalysis }: ReportVie
       <section className="report-section">
         <div className="section-heading">
           <div>
-            <p className="eyebrow">
-              <span className="eyebrow-index">05</span>
-              Диагностика
-            </p>
+            <p className="eyebrow">Диагностика</p>
             <h2>Найденные проблемы</h2>
           </div>
         </div>
@@ -89,10 +80,7 @@ export function ReportView({ analysisId, url, result, onNewAnalysis }: ReportVie
       <section className="report-section">
         <div className="section-heading">
           <div>
-            <p className="eyebrow">
-              <span className="eyebrow-index">06</span>
-              План работ
-            </p>
+            <p className="eyebrow">План работ</p>
             <h2>Задачи на улучшение</h2>
           </div>
         </div>

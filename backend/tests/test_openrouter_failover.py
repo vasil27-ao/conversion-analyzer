@@ -143,8 +143,83 @@ def test_failover_does_not_switch_on_config_error():
     fallback.analyze.assert_not_awaited()
 
 
+def test_failover_chain_tries_providers_in_order():
+    expected = build_mock_llm_result()
+    first = MagicMock()
+    first.analyze = AsyncMock(
+        side_effect=AgentApiError("Сервис анализа временно недоступен. Попробуйте позже.")
+    )
+    second = MagicMock()
+    second.analyze = AsyncMock(
+        side_effect=AgentApiError(
+            "Сейчас слишком много запросов к сервису анализа. "
+            "Подождите 1–2 минуты и попробуйте снова."
+        )
+    )
+    third = MagicMock()
+    third.analyze = AsyncMock(return_value=expected)
+
+    client = FailoverAgentClient(
+        providers=[("a", first), ("b", second), ("c", third)]
+    )
+    result = asyncio.run(client.analyze(_sample_page()))
+    assert result.overall.summary == expected.overall.summary
+    assert first.analyze.await_count == 1
+    assert second.analyze.await_count == 1
+    assert third.analyze.await_count == 1
+
+
+def test_build_agent_client_gemini_rotates_two_models_without_other_keys():
+    settings = Settings(
+        _env_file=None,
+        agent_impl="gemini",
+        gemini_api_key="gemini-test-key",
+        gemini_model="gemini-3.6-flash",
+        gemini_model_fallback="gemini-2.5-flash",
+        openrouter_api_key="",
+        groq_api_key="",
+    )
+    client = build_agent_client(settings)
+    assert isinstance(client, FailoverAgentClient)
+    assert len(client._providers) == 2
+    assert client._providers[0][0] == "gemini:gemini-3.6-flash"
+    assert client._providers[1][0] == "gemini:gemini-2.5-flash"
+
+
+def test_build_agent_client_gemini_chain_includes_openrouter_and_groq():
+    settings = Settings(
+        _env_file=None,
+        agent_impl="gemini",
+        gemini_api_key="gemini-test-key",
+        gemini_model="gemini-3.6-flash",
+        gemini_model_fallback="gemini-2.5-flash",
+        openrouter_api_key="openrouter-test-key",
+        groq_api_key="groq-test-key",
+    )
+    client = build_agent_client(settings)
+    assert isinstance(client, FailoverAgentClient)
+    names = [name for name, _ in client._providers]
+    assert names[0].startswith("gemini:")
+    assert names[1].startswith("gemini:")
+    assert names[2].startswith("openrouter:")
+    assert names[3].startswith("groq:")
+
+
+def test_build_agent_client_groq_only():
+    from app.agent.groq_client import GroqAgentClient
+
+    settings = Settings(
+        _env_file=None,
+        agent_impl="groq",
+        groq_api_key="groq-test-key",
+    )
+    client = build_agent_client(settings)
+    assert isinstance(client, GroqAgentClient)
+
+
 def test_build_agent_client_wraps_gemini_with_failover_when_openrouter_key_set():
     settings = Settings(
+        _env_file=None,
         agent_impl="gemini",
         gemini_api_key="gemini-test-key",
         openrouter_api_key="openrouter-test-key",
@@ -155,6 +230,7 @@ def test_build_agent_client_wraps_gemini_with_failover_when_openrouter_key_set()
 
 def test_build_agent_client_openrouter_only():
     settings = Settings(
+        _env_file=None,
         agent_impl="openrouter",
         openrouter_api_key="openrouter-test-key",
     )

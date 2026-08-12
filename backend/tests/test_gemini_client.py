@@ -113,16 +113,20 @@ def test_analyze_api_error_raises_agent_api_error():
         model="gemini-3.6-flash",
         client=mock_client,
     )
-    with pytest.raises(AgentApiError, match="Gemini API"):
+    with pytest.raises(AgentApiError, match="слишком много запросов"):
         asyncio.run(client.analyze(_sample_page()))
 
 
-def test_build_page_payload_truncates_large_html_keeps_head_and_tail():
-    from app.agent.gemini_client import HTML_CHAR_LIMIT, truncate_html_for_llm
+def test_build_page_payload_uses_skeleton_and_strips_scripts():
+    from app.agent.common import HTML_CHAR_LIMIT, truncate_html_for_llm
 
     head_marker = "<!--HEAD_UNIQUE-->"
+    mid_script = "<script>" + ("x" * 50_000) + "</script>"
     tail_marker = "<!--TAIL_UNIQUE_FOOTER_REVIEWS-->"
-    huge_html = head_marker + ("x" * 200_000) + tail_marker
+    huge_html = (
+        f"<html><body>{head_marker}<h1>Offer</h1>{mid_script}"
+        f"<footer>{tail_marker}</footer></body></html>"
+    )
     page = PageData(
         url=HttpUrl("https://example.com/big"),
         html=huge_html,
@@ -132,10 +136,11 @@ def test_build_page_payload_truncates_large_html_keeps_head_and_tail():
     )
     payload = build_page_payload(page)
     assert payload["html_truncated"] is True
+    assert payload["html_mode"].startswith("skeleton")
+    assert len(payload["html"]) < len(huge_html)
+    assert "<script" not in payload["html"].lower()
+    assert "Offer" in payload["html"]
     assert len(payload["html"]) <= HTML_CHAR_LIMIT
-    assert head_marker in payload["html"]
-    assert tail_marker in payload["html"]
-    assert "HTML middle omitted" in payload["html"]
 
     kept, truncated = truncate_html_for_llm("short")
     assert truncated is False

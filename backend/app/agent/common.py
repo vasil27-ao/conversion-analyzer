@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import logging
+from contextvars import ContextVar
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +24,11 @@ DEFAULT_SYSTEM_PROMPT_PATH = (
 HTML_CHAR_LIMIT = 120_000
 HTML_HEAD_RATIO = 0.55
 
+# Для сравнительных прогонов head_tail vs skeleton без смены AgentClient API.
+html_mode_override: ContextVar[str | None] = ContextVar(
+    "html_mode_override",
+    default=None,
+)
 
 def user_facing_agent_api_error(code: object, status: object) -> str:
     """Сообщение для клиента без привязки к конкретному LLM-провайдеру."""
@@ -79,7 +85,7 @@ def load_system_prompt(path: Path | None = None) -> str:
 
 
 def truncate_html_for_llm(html: str, limit: int = HTML_CHAR_LIMIT) -> tuple[str, bool]:
-    """Обрезает HTML до limit, сохраняя начало и конец страницы."""
+    """Обрезает HTML до limit, сохраняя начало и конец страницы (legacy / fallback)."""
     if len(html) <= limit:
         return html, False
 
@@ -101,27 +107,71 @@ def truncate_html_for_llm(html: str, limit: int = HTML_CHAR_LIMIT) -> tuple[str,
     return truncated, True
 
 
-def build_page_payload(page_data: PageData) -> dict[str, Any]:
+def prepare_html_for_llm(
+    html: str,
+    *,
+    mode: str | None = None,
+) -> tuple[str, bool, str]:
+    """
+    Готовит HTML для LLM.
+
+    mode:
+      - "skeleton" (default / production) — semantic skeleton;
+      - "head_tail" — legacy head+tail truncation (для сравнения).
+    """
+    from app.agent.html_skeleton import build_html_skeleton, strip_collector_invisible
+
+    selected = (mode or html_mode_override.get() or "skeleton").strip().lower()
+    if not html or not html.strip():
+        return "", False, "raw"
+
+    # Невидимые (помеченные коллектором) узлы не должны попадать в LLM как «контент».
+    html = strip_collector_invisible(html)
+
+    if selected in {"head_tail", "head+tail", "truncate"}:
+        truncated, was_truncated = truncate_html_for_llm(html)
+        return truncated, was_truncated, "head_tail"
+
+    skeleton, hard_trimmed = build_html_skeleton(html)
+    if not skeleton.strip():
+        truncated, was_truncated = truncate_html_for_llm(html)
+        return truncated, was_truncated, "raw"
+
+    was_reduced = hard_trimmed or len(skeleton) < len(html)
+    out_mode = "skeleton+trim" if hard_trimmed else "skeleton"
+    return skeleton, was_reduced, out_mode
+
+
+def build_page_payload(
+    page_data: PageData,
+    *,
+    html_mode: str | None = None,
+) -> dict[str, Any]:
     """Сериализует PageData для user-сообщения без скриншотов и без ключей."""
     payload = page_data.model_dump(mode="json")
     html = payload.get("html") or ""
-    truncated_html, was_truncated = truncate_html_for_llm(html)
-    payload["html"] = truncated_html
-    payload["html_truncated"] = was_truncated
-    if was_truncated:
+    prepared_html, was_reduced, mode = prepare_html_for_llm(html, mode=html_mode)
+    payload["html"] = prepared_html
+    # Совместимость с промптом: флаг означает «HTML уплотнён для лимита запроса».
+    payload["html_truncated"] = was_reduced
+    payload["html_mode"] = mode
+    if was_reduced or mode.startswith("skeleton") or mode == "head_tail":
         logger.warning(
-            "Page HTML truncated for LLM input (head+tail): url=%s "
-            "original_len=%s limit=%s kept_len=%s",
+            "Page HTML prepared for LLM: mode=%s url=%s original_len=%s kept_len=%s",
+            mode,
             page_data.url,
             len(html),
-            HTML_CHAR_LIMIT,
-            len(truncated_html),
+            len(prepared_html),
         )
     return payload
 
 
-def build_analysis_user_message(page_data: PageData) -> str:
-    user_payload = build_page_payload(page_data)
+def build_analysis_user_message(
+    page_data: PageData,
+    *,
+    html_mode: str | None = None,
+) -> str:
+    user_payload = build_page_payload(page_data, html_mode=html_mode)
     return (
         "Проанализируй лендинг строго по системному промпту и верни только "
         "JSON по схеме LlmAgentResult (без numeric overall/block score).\n\n"

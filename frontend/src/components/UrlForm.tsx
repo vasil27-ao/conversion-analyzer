@@ -16,13 +16,11 @@ export function UrlForm({ value, error, submitting, onChange, onSubmit }: UrlFor
       }}
     >
       <div className="url-form-head">
-        <p className="eyebrow">
-          <span className="eyebrow-index">02</span>
-          Запуск анализа
-        </p>
+        <p className="eyebrow">Запуск анализа</p>
         <h2>Вставьте URL страницы</h2>
         <p className="hint url-form-lead">
-          Публичная страница по http(s). Анализ обычно занимает от нескольких секунд до пары минут.
+          Публичная страница по http(s). Можно вставить адрес без https:// — добавим сами. Анализ
+          обычно занимает 1–2 минуты, сложные страницы могут занять больше времени.
         </p>
         <p className="hint url-form-scope">
           Первая версия предназначена для анализа лендингов.
@@ -35,7 +33,7 @@ export function UrlForm({ value, error, submitting, onChange, onSubmit }: UrlFor
         <input
           id="page-url"
           className="url-input"
-          type="url"
+          type="text"
           name="url"
           inputMode="url"
           autoComplete="url"

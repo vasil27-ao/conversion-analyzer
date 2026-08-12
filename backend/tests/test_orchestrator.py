@@ -113,7 +113,12 @@ def test_run_collector_error_sets_failed():
 
 def test_run_llm_error_sets_failed():
     agent = AsyncMock(spec=AgentClient)
-    agent.analyze = AsyncMock(side_effect=AgentApiError("Ошибка Gemini API (code=429)."))
+    agent.analyze = AsyncMock(
+        side_effect=AgentApiError(
+            "Сейчас слишком много запросов к сервису анализа. "
+            "Подождите 1–2 минуты и попробуйте снова."
+        )
+    )
     collect_fn = AsyncMock(return_value=_sample_page())
     orch, repo = _orchestrator(agent=agent, collect_fn=collect_fn)
 
@@ -121,7 +126,7 @@ def test_run_llm_error_sets_failed():
 
     assert result.status == AnalysisStatus.FAILED
     assert result.result is None
-    assert "Gemini API" in (result.error_message or "")
+    assert "слишком много запросов" in (result.error_message or "")
     assert repo.saved_statuses == [
         AnalysisStatus.PENDING,
         AnalysisStatus.RUNNING,
@@ -154,7 +159,7 @@ def test_run_validation_error_sets_failed():
     assert result.status == AnalysisStatus.FAILED
     assert result.result is None
     assert result.error_message is not None
-    assert "проверку методики" in result.error_message
+    assert "сформировать отчёт" in (result.error_message or "")
     assert repo.saved_statuses == [
         AnalysisStatus.PENDING,
         AnalysisStatus.RUNNING,

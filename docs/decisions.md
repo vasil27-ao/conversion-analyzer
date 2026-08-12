@@ -72,10 +72,32 @@
 - Решение: frontend деплоится на Vercel (Root Directory `frontend`, env `VITE_API_BASE`); backend — на Railway из `backend/Dockerfile` на базе `mcr.microsoft.com/playwright/python` (Chromium и системные зависимости уже в образе). CORS вынесен в `CORS_ORIGINS` (локальный Vite + URL Vercel). Секреты только в env хостинга / локальном `.env`, не в репозитории.
 - Статус: наше техническое решение публикации (зафиксировано командой).
 
+## 2026-08-11 — CRO-видимость = эффективная визуальная видимость (не наличие в DOM)
+
+- Контекст: на Allbirds агент опирался на «Reviews for Women's Strider», хотя блок визуально не показан (absolute-заголовок внутри секции `height:0`). Текст попадал в `visible_text` (`innerText`) и в `named_blocks`/`headings` с `visible=true`; браузерный поиск по странице тоже находил строку в скрытой разметке.
+- **Принцип (итогово зафиксирован):** для CRO-доказательств «пользователь видит X» источником истины считается **эффективная визуальная видимость** отрендеренной страницы, а **не** просто наличие узла/текста в DOM. Наличие в DOM без эффективной видимости не является доказательством отображаемого блока.
+- Реализация: единая проверка `isEffectivelyVisible` (предки, aria/hidden, opacity, `checkVisibility`, нулевой layout, absolute/fixed в схлопнутом предке); `visible_text` и layout строятся только по видимым узлам; сырой `html` может сохранять скрытые поддеревья с маркером `data-collector-invisible`, перед LLM они вырезаются; в промпте запрещено описывать скрытое как отображаемый блок/`location`.
+- Проверка: повторный анализ Allbirds после фикса — скрытый Reviews не описывается как отображаемая секция; отсутствие видимых отзывов фиксируется корректно как пробел соцдоказательства.
+- Статус: итоговое методологическое правило сервиса (зафиксировано командой / подтверждено PM).
+
+## 2026-08-11 — Semantic HTML skeleton вместо head+tail для LLM
+
+- Контекст: head+tail HTML на тяжёлых страницах давал большой промпт (до 120k) и терял середину разметки; полный HTML раздувался scripts/styles.
+- Решение (наше техническое): в LLM уходит компактный semantic HTML skeleton (`build_html_skeleton`): формы/кнопки/ссылки/заголовки и значимые атрибуты; без script/style/служебной разметки. `visible_text` и desktop/mobile layout остаются полными. Production-режим — skeleton; head+tail оставлен для сравнения.
+- Сравнение: на шумных страницах skeleton заметно меньше (например w3schools ~479k → ~55k vs head+tail 120k; Allbirds ~670k → ~80k). Полный A/B по score на тяжёлых URL сейчас упирается в лимиты Gemini/OpenRouter free; на `example.com` оба режима дали уровень «низкий» при обычной LLM-вариативности баллов.
+- Статус: наше техническое решение (зафиксировано командой).
+
+## 2026-08-12 — Ротация Gemini + третий free LLM (Groq)
+
+- Контекст: на приёмке Gemini free даёт 503/429; OpenRouter `:free` имеет общий дневной лимит и иногда снимает slug’и. Одного запасного провайдера мало.
+- Решение (наше техническое): `FailoverAgentClient` принимает цепочку провайдеров. При `AGENT_IMPL=gemini`: `GEMINI_MODEL` → `GEMINI_MODEL_FALLBACK` (дефолт `gemini-2.5-flash`) → OpenRouter (если ключ) → Groq (если ключ, дефолт `llama-3.3-70b-versatile`). Без повторного «дожима» primary в конце цепочки.
+- Статус: наше техническое решение (зафиксировано командой).
+
 ## 2026-08-11 — Запасной LLM OpenRouter/Qwen и failover без длинных ретраев
 
 - Контекст: Gemini free tier иногда отдаёт `503 UNAVAILABLE` (high demand); нужен бесплатный запасной вариант на русском до появления платного ключа заказчика.
-- Решение (наше техническое): при `AGENT_IMPL=gemini` и заданном `OPENROUTER_API_KEY` агент оборачивается в `FailoverAgentClient` — попытки `Gemini → OpenRouter (Qwen :free) → Gemini` только при временных ошибках API/невалидном JSON, без minute-sleep. Отдельный режим `AGENT_IMPL=openrouter`. Модель OpenRouter задаётся `OPENROUTER_MODEL` (дефолт `qwen/qwen3-32b:free`).
+- Решение (наше техническое): при `AGENT_IMPL=gemini` и заданном `OPENROUTER_API_KEY` агент оборачивается в `FailoverAgentClient` — попытки `Gemini → OpenRouter (:free) → Gemini` только при временных ошибках API/невалидном JSON, без minute-sleep. Отдельный режим `AGENT_IMPL=openrouter`. Модель OpenRouter задаётся `OPENROUTER_MODEL` (дефолт `google/gemma-4-31b-it:free`; `:free`-slugи часто ротируются).
+- Обновление 2026-08-12: см. решение про ротацию Gemini + Groq выше.
 - Статус: наше техническое решение (зафиксировано командой).
 
 ## 2026-08-11 — Ozon 403 / antibot (FAB) при сборе страницы

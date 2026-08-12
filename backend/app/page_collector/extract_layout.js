@@ -16,19 +16,9 @@
   }
 
   function isVisible(el) {
-    if (!(el instanceof Element)) return false;
-    if (el.hasAttribute("hidden")) return false;
-    if (el.getAttribute("aria-hidden") === "true") return false;
-    const style = window.getComputedStyle(el);
-    if (
-      style.display === "none" ||
-      style.visibility === "hidden" ||
-      style.opacity === "0"
-    ) {
-      return false;
-    }
-    const rect = el.getBoundingClientRect();
-    return !(rect.width === 0 && rect.height === 0);
+    return typeof isEffectivelyVisible === "function"
+      ? isEffectivelyVisible(el)
+      : false;
   }
 
   function inViewport(rect) {
@@ -43,6 +33,7 @@
   function geometry(el, textOverride) {
     const rect = el.getBoundingClientRect();
     const style = window.getComputedStyle(el);
+    const visible = isVisible(el);
     return {
       tag: el.tagName.toLowerCase(),
       text: clip(
@@ -55,7 +46,7 @@
       height: Math.round(rect.height),
       page_x: Math.round(rect.x + window.scrollX),
       page_y: Math.round(rect.y + window.scrollY),
-      visible: isVisible(el),
+      visible,
       in_viewport: inViewport(rect),
       display: style.display,
       position: style.position,
@@ -204,10 +195,12 @@
 
   const headings = Array.from(
     document.querySelectorAll("h1,h2,h3,h4,h5,h6")
-  ).map((el) => ({
-    ...geometry(el),
-    level: Number(el.tagName.substring(1)),
-  }));
+  )
+    .filter((el) => isVisible(el))
+    .map((el) => ({
+      ...geometry(el),
+      level: Number(el.tagName.substring(1)),
+    }));
 
   const ctaSelector = [
     "button",
@@ -229,6 +222,7 @@
   for (const el of ctaNodes) {
     if (seenCtas.has(el)) continue;
     seenCtas.add(el);
+    if (!isVisible(el)) continue;
     const tag = el.tagName.toLowerCase();
     const text =
       tag === "input"
@@ -243,6 +237,7 @@
   }
 
   const links = Array.from(document.querySelectorAll("a[href]"))
+    .filter((el) => isVisible(el))
     .slice(0, MAX_LINKS)
     .map((el) => ({
       ...geometry(el),
@@ -263,13 +258,16 @@
     );
   }
 
-  const forms = Array.from(document.querySelectorAll("form")).map((form) => {
+  const forms = Array.from(document.querySelectorAll("form"))
+    .filter((form) => isVisible(form))
+    .map((form) => {
     const fields = Array.from(
       form.querySelectorAll("input, textarea, select, button")
     )
       .filter((field) => {
         const type = (field.getAttribute("type") || "").toLowerCase();
-        return type !== "hidden";
+        if (type === "hidden") return false;
+        return isVisible(field);
       })
       .map((field) => ({
         ...geometry(field, field.value || field.innerText || ""),
@@ -321,10 +319,17 @@
   }
 
   for (const heading of document.querySelectorAll("h1,h2,h3,h4,h5,h6")) {
+    if (!isVisible(heading)) continue;
     const name = clip(heading.innerText || "", TEXT_LIMIT);
     if (!name) continue;
     const kind = classifyNamedBlock(name);
     if (!kind) continue;
+    const root = findSectionRoot(heading);
+    // Секция-оболочка нулевой высоты (виджет не раскрыт) — не считаем блоком.
+    if (root instanceof Element) {
+      const rootRect = root.getBoundingClientRect();
+      if (rootRect.height < 1) continue;
+    }
     addNamedSection(heading, name, kind);
   }
 
@@ -393,6 +398,7 @@
   }
 
   const images = Array.from(document.querySelectorAll("img, [role='img']"))
+    .filter((el) => isVisible(el))
     .slice(0, MAX_IMAGES)
     .map((el) => {
       const named = namedBlockFor(el);
@@ -405,17 +411,28 @@
       };
     });
 
-  const named_blocks = sectionByHeading.map((block, index) => {
-    const imgs = imagesForBlock(block, index);
-    return {
-      ...geometry(block.root || block.heading),
-      name: block.name,
-      kind: block.kind,
-      has_images: imgs.length > 0,
-      image_count: imgs.length,
-      text_preview: clip((block.root || block.heading).innerText || "", PREVIEW_LIMIT),
-    };
-  });
+  const named_blocks = sectionByHeading
+    .filter((block) => {
+      const target = block.root || block.heading;
+      if (!(target instanceof Element)) return false;
+      if (!isVisible(block.heading)) return false;
+      const rootRect = (block.root || block.heading).getBoundingClientRect();
+      return rootRect.height >= 1 && rootRect.width >= 1;
+    })
+    .map((block, index) => {
+      const imgs = imagesForBlock(block, index).filter((img) => isVisible(img));
+      return {
+        ...geometry(block.root || block.heading),
+        name: block.name,
+        kind: block.kind,
+        has_images: imgs.length > 0,
+        image_count: imgs.length,
+        text_preview: clip(
+          (block.root || block.heading).innerText || "",
+          PREVIEW_LIMIT
+        ),
+      };
+    });
 
   return {
     viewport,

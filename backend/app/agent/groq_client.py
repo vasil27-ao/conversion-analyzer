@@ -1,7 +1,7 @@
 """
-Реализация AgentClient через OpenRouter (OpenAI-compatible Chat Completions).
+Реализация AgentClient через Groq (OpenAI-compatible Chat Completions).
 
-Используется как бесплатный запасной LLM (по умолчанию Qwen :free).
+Бесплатный третий LLM в цепочке failover (отдельная квота от Gemini/OpenRouter).
 """
 
 from __future__ import annotations
@@ -27,43 +27,40 @@ from app.page_collector.models import PageData
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
-# Бесплатный fallback на OpenRouter; при исчезновении :free — задайте OPENROUTER_MODEL.
-DEFAULT_OPENROUTER_MODEL = "google/gemma-4-31b-it:free"
-OPENROUTER_TIMEOUT_S = 180.0
+DEFAULT_GROQ_BASE_URL = "https://api.groq.com/openai/v1"
+# Сильнее для CRO-отчёта; при нехватке квоты задайте llama-3.1-8b-instant.
+DEFAULT_GROQ_MODEL = "llama-3.3-70b-versatile"
+GROQ_TIMEOUT_S = 180.0
 
 
-class OpenRouterAgentClient(AgentClient):
-    """Вызов OpenRouter chat/completions → LlmAgentResult (JSON в ответе)."""
+class GroqAgentClient(AgentClient):
+    """Вызов Groq chat/completions → LlmAgentResult (JSON в ответе)."""
 
     def __init__(
         self,
         api_key: str,
-        model: str = DEFAULT_OPENROUTER_MODEL,
+        model: str = DEFAULT_GROQ_MODEL,
         *,
-        base_url: str = DEFAULT_OPENROUTER_BASE_URL,
+        base_url: str = DEFAULT_GROQ_BASE_URL,
         system_prompt_path: Path | None = None,
         http_client: Optional[httpx.AsyncClient] = None,
-        site_url: str = "",
-        site_name: str = "Conversion Analyzer",
     ) -> None:
         if not api_key or not api_key.strip():
             raise AgentConfigError(
-                "OPENROUTER_API_KEY не задан. Укажите ключ в backend/.env."
+                "GROQ_API_KEY не задан. Укажите ключ в backend/.env "
+                "(https://console.groq.com/keys)."
             )
         self._api_key = api_key.strip()
-        self._model = (model or "").strip() or DEFAULT_OPENROUTER_MODEL
-        self._base_url = (base_url or DEFAULT_OPENROUTER_BASE_URL).rstrip("/")
+        self._model = (model or "").strip() or DEFAULT_GROQ_MODEL
+        self._base_url = (base_url or DEFAULT_GROQ_BASE_URL).rstrip("/")
         self._system_prompt_path = system_prompt_path or DEFAULT_SYSTEM_PROMPT_PATH
         self._http_client = http_client
-        self._site_url = (site_url or "").strip()
-        self._site_name = (site_name or "").strip() or "Conversion Analyzer"
 
     async def analyze(self, page_data: PageData) -> LlmAgentResult:
         system_prompt = load_system_prompt(self._system_prompt_path)
         user_text = build_analysis_user_message(page_data)
         logger.info(
-            "Calling OpenRouter model=%s url=%s payload_chars=%s",
+            "Calling Groq model=%s url=%s payload_chars=%s",
             self._model,
             page_data.url,
             len(user_text),
@@ -73,11 +70,7 @@ class OpenRouterAgentClient(AgentClient):
         headers = {
             "Authorization": f"Bearer {self._api_key}",
             "Content-Type": "application/json",
-            "X-Title": self._site_name,
         }
-        if self._site_url:
-            headers["HTTP-Referer"] = self._site_url
-
         body: dict[str, Any] = {
             "model": self._model,
             "messages": [
@@ -96,19 +89,19 @@ class OpenRouterAgentClient(AgentClient):
                     json=body,
                 )
             else:
-                async with httpx.AsyncClient(timeout=OPENROUTER_TIMEOUT_S) as client:
+                async with httpx.AsyncClient(timeout=GROQ_TIMEOUT_S) as client:
                     response = await client.post(
                         f"{self._base_url}/chat/completions",
                         headers=headers,
                         json=body,
                     )
         except httpx.TimeoutException as exc:
-            logger.error("OpenRouter timeout model=%s", self._model)
+            logger.error("Groq timeout model=%s", self._model)
             raise AgentApiError(
                 "Сервис анализа временно недоступен. Попробуйте позже."
             ) from exc
         except httpx.HTTPError as exc:
-            logger.exception("OpenRouter network error")
+            logger.exception("Groq network error")
             raise AgentApiError(
                 "Не удалось выполнить анализ страницы. Попробуйте ещё раз."
             ) from exc
@@ -121,12 +114,10 @@ class OpenRouterAgentClient(AgentClient):
                 err = err_payload.get("error") if isinstance(err_payload, dict) else None
                 if isinstance(err, dict):
                     status = err.get("code") or err.get("type") or err.get("status")
-                    if status is None and isinstance(err.get("metadata"), dict):
-                        status = err["metadata"].get("raw")
             except Exception:  # noqa: BLE001
                 err_payload = None
             logger.error(
-                "OpenRouter API error: code=%s status=%s body=%s",
+                "Groq API error: code=%s status=%s body=%s",
                 code,
                 status,
                 (response.text or "")[:300],
@@ -137,13 +128,12 @@ class OpenRouterAgentClient(AgentClient):
             payload = response.json()
             content = payload["choices"][0]["message"]["content"]
         except (ValueError, KeyError, IndexError, TypeError) as exc:
-            logger.error("OpenRouter unexpected response shape")
+            logger.error("Groq unexpected response shape")
             raise AgentApiError(
                 "Не удалось выполнить анализ страницы. Попробуйте ещё раз."
             ) from exc
 
         if isinstance(content, list):
-            # Некоторые модели возвращают content parts.
             text_parts = [
                 part.get("text", "")
                 for part in content
@@ -153,17 +143,17 @@ class OpenRouterAgentClient(AgentClient):
 
         result = parse_llm_agent_result_from_text(
             str(content),
-            provider_label="OpenRouter",
+            provider_label="Groq",
         )
         elapsed = time.perf_counter() - started
         logger.info(
-            "OpenRouter response parsed: blocks=%s problems=%s backlog=%s",
+            "Groq response parsed: blocks=%s problems=%s backlog=%s",
             len(result.blocks),
             len(result.problems),
             len(result.backlog),
         )
         logger.info(
-            "Timing openrouter model=%s url=%s openrouter_s=%.3f",
+            "Timing groq model=%s url=%s groq_s=%.3f",
             self._model,
             page_data.url,
             elapsed,
