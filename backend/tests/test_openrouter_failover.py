@@ -98,22 +98,19 @@ def test_failover_switches_to_fallback_on_transient_primary_error():
     fallback = MagicMock()
     fallback.analyze = AsyncMock(return_value=expected)
 
-    client = FailoverAgentClient(primary=primary, fallback=fallback)
+    client = FailoverAgentClient(primary=primary, fallback=fallback, sleep_fn=AsyncMock())
     result = asyncio.run(client.analyze(_sample_page()))
 
     assert result.overall.summary == expected.overall.summary
     assert primary.analyze.await_count == 1
     assert fallback.analyze.await_count == 1
+    assert fallback.analyze.await_args_list[0].args[0] is not None
 
 
-def test_failover_retries_primary_after_fallback_transient_error():
-    expected = build_mock_llm_result()
+def test_failover_does_not_retry_primary_after_fallback_real_failure():
     primary = MagicMock()
     primary.analyze = AsyncMock(
-        side_effect=[
-            AgentApiError("Сервис анализа временно недоступен. Попробуйте позже."),
-            expected,
-        ]
+        side_effect=AgentApiError("Сервис анализа временно недоступен. Попробуйте позже.")
     )
     fallback = MagicMock()
     fallback.analyze = AsyncMock(
@@ -123,11 +120,11 @@ def test_failover_retries_primary_after_fallback_transient_error():
         )
     )
 
-    client = FailoverAgentClient(primary=primary, fallback=fallback)
-    result = asyncio.run(client.analyze(_sample_page()))
+    client = FailoverAgentClient(primary=primary, fallback=fallback, sleep_fn=AsyncMock())
+    with pytest.raises(AgentApiError, match="слишком много запросов"):
+        asyncio.run(client.analyze(_sample_page()))
 
-    assert isinstance(result, LlmAgentResult)
-    assert primary.analyze.await_count == 2
+    assert primary.analyze.await_count == 1
     assert fallback.analyze.await_count == 1
 
 
@@ -214,7 +211,10 @@ def test_build_agent_client_groq_only():
         groq_api_key="groq-test-key",
     )
     client = build_agent_client(settings)
-    assert isinstance(client, GroqAgentClient)
+    assert isinstance(client, FailoverAgentClient)
+    assert len(client._providers) == 1
+    assert client._providers[0][0].startswith("groq:")
+    assert isinstance(client._providers[0][1], GroqAgentClient)
 
 
 def test_build_agent_client_wraps_gemini_with_failover_when_openrouter_key_set():
@@ -235,7 +235,9 @@ def test_build_agent_client_openrouter_only():
         openrouter_api_key="openrouter-test-key",
     )
     client = build_agent_client(settings)
-    assert isinstance(client, OpenRouterAgentClient)
+    assert isinstance(client, FailoverAgentClient)
+    assert len(client._providers) == 1
+    assert isinstance(client._providers[0][1], OpenRouterAgentClient)
 
 
 def test_openrouter_invalid_json_raises():
@@ -249,3 +251,99 @@ def test_openrouter_invalid_json_raises():
     client = OpenRouterAgentClient(api_key="test-key", http_client=http_client)
     with pytest.raises(AgentInvalidResponseError, match="JSON"):
         asyncio.run(client.analyze(_sample_page()))
+
+
+def test_failover_retries_429_on_same_provider_then_succeeds():
+    expected = build_mock_llm_result()
+    primary = MagicMock()
+    primary.analyze = AsyncMock(
+        side_effect=[
+            AgentApiError("rate", status_code=429, api_status="RESOURCE_EXHAUSTED"),
+            expected,
+        ]
+    )
+    fallback = MagicMock()
+    fallback.analyze = AsyncMock(return_value=build_mock_llm_result())
+    sleep_fn = AsyncMock()
+
+    client = FailoverAgentClient(
+        providers=[("gemini:primary", primary), ("openrouter:fb", fallback)],
+        sleep_fn=sleep_fn,
+    )
+    result = asyncio.run(client.analyze(_sample_page()))
+
+    assert result.overall.summary == expected.overall.summary
+    assert primary.analyze.await_count == 2
+    fallback.analyze.assert_not_awaited()
+    sleep_fn.assert_awaited_once()
+    stats = client.last_stats
+    assert stats is not None
+    assert stats.success_provider == "gemini:primary"
+    assert stats.retry_count == 1
+    assert stats.fallback_used is False
+    assert stats.had_429 is True
+    assert stats.had_503 is False
+
+
+def test_failover_goes_to_next_provider_only_after_429_retries_exhausted():
+    expected = build_mock_llm_result()
+    primary = MagicMock()
+    primary.analyze = AsyncMock(
+        side_effect=AgentApiError("busy", status_code=503, api_status="UNAVAILABLE")
+    )
+    fallback = MagicMock()
+    fallback.analyze = AsyncMock(return_value=expected)
+    sleep_fn = AsyncMock()
+
+    client = FailoverAgentClient(
+        providers=[("gemini:primary", primary), ("groq:fb", fallback)],
+        sleep_fn=sleep_fn,
+        max_attempts=3,
+    )
+    result = asyncio.run(client.analyze(_sample_page()))
+
+    assert result.overall.summary == expected.overall.summary
+    assert primary.analyze.await_count == 3
+    assert fallback.analyze.await_count == 1
+    assert sleep_fn.await_count == 2
+    stats = client.last_stats
+    assert stats is not None
+    assert stats.success_provider == "groq:fb"
+    assert stats.retry_count == 2
+    assert stats.fallback_used is True
+    assert stats.had_503 is True
+    assert stats.providers_tried == ["gemini:primary", "groq:fb"]
+
+
+def test_failover_does_not_start_fallback_until_primary_finished():
+    order: list[str] = []
+
+    async def primary_analyze(page):
+        order.append("primary-start")
+        raise AgentApiError("busy", status_code=503, api_status="UNAVAILABLE")
+
+    async def fallback_analyze(page):
+        order.append("fallback-start")
+        return build_mock_llm_result()
+
+    primary = MagicMock()
+    primary.analyze = AsyncMock(side_effect=primary_analyze)
+    fallback = MagicMock()
+    fallback.analyze = AsyncMock(side_effect=fallback_analyze)
+
+    client = FailoverAgentClient(
+        providers=[("a", primary), ("b", fallback)],
+        sleep_fn=AsyncMock(),
+        max_attempts=2,
+    )
+    asyncio.run(client.analyze(_sample_page()))
+    assert order == ["primary-start", "primary-start", "fallback-start"]
+
+
+def test_retry_delay_is_exponential_and_capped():
+    from app.agent.failover_client import retry_delay_s
+
+    assert retry_delay_s(1, base_delay_s=2.0, max_delay_s=8.0) == 2.0
+    assert retry_delay_s(2, base_delay_s=2.0, max_delay_s=8.0) == 4.0
+    assert retry_delay_s(3, base_delay_s=2.0, max_delay_s=8.0) == 8.0
+    assert retry_delay_s(4, base_delay_s=2.0, max_delay_s=8.0) == 8.0

@@ -170,3 +170,38 @@ def test_run_validation_error_sets_failed():
         from app.agent.overall import assemble_agent_result
 
         assemble_agent_result(invalid)
+
+
+def test_orchestrator_serializes_concurrent_analyses():
+    current = 0
+    max_seen = 0
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def slow_analyze(page_data: PageData) -> LlmAgentResult:
+        nonlocal current, max_seen
+        current += 1
+        max_seen = max(max_seen, current)
+        started.set()
+        await release.wait()
+        current -= 1
+        return build_mock_llm_result()
+
+    agent = AsyncMock(spec=AgentClient)
+    agent.analyze = AsyncMock(side_effect=slow_analyze)
+    collect_fn = AsyncMock(return_value=_sample_page())
+    orch, _repo = _orchestrator(agent=agent, collect_fn=collect_fn)
+
+    async def run_two() -> None:
+        first = asyncio.create_task(orch.run("https://example.com/one"))
+        await started.wait()
+        second = asyncio.create_task(orch.run("https://example.com/two"))
+        await asyncio.sleep(0.05)
+        assert max_seen == 1
+        release.set()
+        results = await asyncio.gather(first, second)
+        assert all(item.status == AnalysisStatus.DONE for item in results)
+        assert max_seen == 1
+
+    asyncio.run(run_two())
+    assert agent.analyze.await_count == 2

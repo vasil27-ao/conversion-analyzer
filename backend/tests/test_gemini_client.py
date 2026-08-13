@@ -113,8 +113,9 @@ def test_analyze_api_error_raises_agent_api_error():
         model="gemini-3.6-flash",
         client=mock_client,
     )
-    with pytest.raises(AgentApiError, match="слишком много запросов"):
+    with pytest.raises(AgentApiError, match="слишком много запросов") as exc_info:
         asyncio.run(client.analyze(_sample_page()))
+    assert exc_info.value.status_code == 429
 
 
 def test_build_page_payload_uses_skeleton_and_strips_scripts():

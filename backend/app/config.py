@@ -40,6 +40,10 @@ class Settings(BaseSettings):
     groq_model: str = "llama-3.3-70b-versatile"
     groq_base_url: str = "https://api.groq.com/openai/v1"
 
+    # Не больше одного анализа одновременно: бесплатные квоты не сгорают
+    # от конкурирующих запросов к LLM.
+    max_concurrent_analyses: int = 1
+
     # Путь к SQLite-файлу для AnalysisRepository.
     sqlite_path: str = "data/analyses.db"
 

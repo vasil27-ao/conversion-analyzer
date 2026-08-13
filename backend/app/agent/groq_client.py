@@ -17,8 +17,8 @@ from app.agent.common import (
     DEFAULT_SYSTEM_PROMPT_PATH,
     build_analysis_user_message,
     load_system_prompt,
+    make_agent_api_error,
     parse_llm_agent_result_from_text,
-    user_facing_agent_api_error,
 )
 from app.agent.errors import AgentApiError, AgentConfigError
 from app.agent.interface import AgentClient
@@ -98,7 +98,9 @@ class GroqAgentClient(AgentClient):
         except httpx.TimeoutException as exc:
             logger.error("Groq timeout model=%s", self._model)
             raise AgentApiError(
-                "Сервис анализа временно недоступен. Попробуйте позже."
+                "Сервис анализа временно недоступен. Попробуйте позже.",
+                status_code=504,
+                api_status="timeout",
             ) from exc
         except httpx.HTTPError as exc:
             logger.exception("Groq network error")
@@ -122,7 +124,7 @@ class GroqAgentClient(AgentClient):
                 status,
                 (response.text or "")[:300],
             )
-            raise AgentApiError(user_facing_agent_api_error(code, status))
+            raise make_agent_api_error(code, status)
 
         try:
             payload = response.json()

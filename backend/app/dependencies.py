@@ -55,10 +55,24 @@ def build_agent_client(settings: Settings) -> AgentClient:
     groq_key = (settings.groq_api_key or "").strip()
 
     if impl == "openrouter":
-        return _build_openrouter(settings)
+        return FailoverAgentClient(
+            providers=[
+                (
+                    f"openrouter:{(settings.openrouter_model or '').strip() or DEFAULT_OPENROUTER_MODEL}",
+                    _build_openrouter(settings),
+                )
+            ]
+        )
 
     if impl == "groq":
-        return _build_groq(settings)
+        return FailoverAgentClient(
+            providers=[
+                (
+                    f"groq:{(settings.groq_model or '').strip() or DEFAULT_GROQ_MODEL}",
+                    _build_groq(settings),
+                )
+            ]
+        )
 
     if impl == "gemini":
         primary_model = (settings.gemini_model or "").strip() or DEFAULT_GEMINI_MODEL
@@ -83,8 +97,9 @@ def build_agent_client(settings: Settings) -> AgentClient:
             groq_model = (settings.groq_model or "").strip() or DEFAULT_GROQ_MODEL
             providers.append((f"groq:{groq_model}", _build_groq(settings)))
 
-        if len(providers) == 1:
-            return providers[0][1]
+        if not providers:
+            raise AgentConfigError("Не удалось собрать цепочку LLM-провайдеров.")
+        # Даже один провайдер оборачиваем: retry 429/503, лок, логирование.
         return FailoverAgentClient(providers=providers)
 
     raise AgentConfigError(
@@ -106,4 +121,5 @@ def build_orchestrator(
     return AnalysisOrchestrator(
         repository=repository or build_repository(settings),
         agent=agent or build_agent_client(settings),
+        max_concurrent_analyses=settings.max_concurrent_analyses,
     )

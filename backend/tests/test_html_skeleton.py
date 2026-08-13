@@ -78,8 +78,10 @@ def test_build_page_payload_keeps_visible_text_and_layout_full():
     payload = build_page_payload(page)
     assert payload["visible_text"] == "FULL TEXT MIDDLE AND FOOTER"
     assert payload["layout_desktop"]["viewport"]["width"] == 1280
+    assert payload["layout_mobile"]["viewport"]["width"] == 390
     assert payload["html_mode"].startswith("skeleton")
     assert "<script" not in payload["html"].lower()
+    assert "window.TRACK" not in payload["html"]
 
 
 def test_truncate_html_for_llm_still_keeps_head_and_tail():

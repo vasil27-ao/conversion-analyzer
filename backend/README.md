@@ -40,6 +40,7 @@ CORS по умолчанию разрешён для локального Vite (
    - `OPENROUTER_MODEL=google/gemma-4-31b-it:free` — актуальный `:free` slug
    - `GROQ_API_KEY` — опционально, третий free LLM (https://console.groq.com/keys)
    - `GROQ_MODEL=llama-3.3-70b-versatile`
+   - `MAX_CONCURRENT_ANALYSES=1` — не обязателен, дефолт уже 1
    - `APP_ENV=production`
    - `CORS_ORIGINS` — локальные origins + `https://<ваш-frontend>.vercel.app`
    - `SQLITE_PATH=/app/data/analyses.db` (уже в Dockerfile)

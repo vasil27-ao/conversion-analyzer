@@ -23,9 +23,9 @@ from app.agent.common import (
     build_analysis_user_message,
     build_page_payload,
     load_system_prompt,
+    make_agent_api_error,
     parse_llm_agent_result_from_text,
     truncate_html_for_llm,
-    user_facing_agent_api_error,
 )
 from app.agent.errors import (
     AgentApiError,
@@ -173,7 +173,7 @@ class GeminiAgentClient(AgentClient):
             code = getattr(exc, "code", None)
             status = getattr(exc, "status", None)
             logger.error("Gemini API error: code=%s status=%s", code, status)
-            raise AgentApiError(user_facing_agent_api_error(code, status)) from exc
+            raise make_agent_api_error(code, status) from exc
         except Exception as exc:  # noqa: BLE001
             logger.exception("Unexpected Gemini client failure")
             raise AgentApiError(

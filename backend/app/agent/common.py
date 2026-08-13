@@ -16,6 +16,10 @@ from app.agent.errors import AgentApiError, AgentConfigError, AgentInvalidRespon
 from app.agent.schemas import LlmAgentResult
 from app.page_collector.models import PageData
 
+RETRYABLE_HTTP_CODES = frozenset({429, 503})
+TRANSIENT_HTTP_CODES = frozenset({429, 500, 502, 503, 504})
+NON_FAILOVER_HTTP_CODES = frozenset({401, 403})
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_SYSTEM_PROMPT_PATH = (
@@ -30,13 +34,36 @@ html_mode_override: ContextVar[str | None] = ContextVar(
     default=None,
 )
 
+def coerce_http_status_code(code: object) -> int | None:
+    try:
+        if code is None or isinstance(code, bool):
+            return None
+        return int(code)
+    except (TypeError, ValueError):
+        return None
+
+
+def inferred_http_status_code(code: object, status: object) -> int | None:
+    """HTTP-код из ответа провайдера или из текстового status."""
+    code_int = coerce_http_status_code(code)
+    if code_int is not None:
+        return code_int
+    status_text = str(status or "").upper()
+    if status_text in {"RESOURCE_EXHAUSTED", "TOO_MANY_REQUESTS"}:
+        return 429
+    if status_text in {"UNAVAILABLE"}:
+        return 503
+    if status_text in {"INTERNAL"}:
+        return 500
+    if status_text in {"DEADLINE_EXCEEDED"}:
+        return 504
+    return None
+
+
 def user_facing_agent_api_error(code: object, status: object) -> str:
     """Сообщение для клиента без привязки к конкретному LLM-провайдеру."""
     status_text = str(status or "").upper()
-    try:
-        code_int = int(code) if code is not None else None
-    except (TypeError, ValueError):
-        code_int = None
+    code_int = inferred_http_status_code(code, status)
 
     if code_int == 429 or status_text in {"RESOURCE_EXHAUSTED", "TOO_MANY_REQUESTS"}:
         return (
@@ -57,12 +84,33 @@ def user_facing_agent_api_error(code: object, status: object) -> str:
     return "Не удалось выполнить анализ страницы. Попробуйте ещё раз."
 
 
+def make_agent_api_error(code: object, status: object) -> AgentApiError:
+    return AgentApiError(
+        user_facing_agent_api_error(code, status),
+        status_code=inferred_http_status_code(code, status),
+        api_status=str(status) if status is not None else None,
+    )
+
+
+def is_retryable_agent_error(exc: BaseException) -> bool:
+    """429/503 — имеет смысл повторить тот же провайдер с backoff."""
+    if not isinstance(exc, AgentApiError):
+        return False
+    code = inferred_http_status_code(exc.status_code, exc.api_status)
+    return code in RETRYABLE_HTTP_CODES
+
+
 def is_transient_agent_error(exc: BaseException) -> bool:
-    """Ошибки, при которых имеет смысл сразу переключиться на запасной LLM."""
+    """Ошибки, после реального отказа которых можно перейти к запасному LLM."""
     if isinstance(exc, AgentInvalidResponseError):
         return True
     if not isinstance(exc, AgentApiError):
         return False
+    code = inferred_http_status_code(exc.status_code, exc.api_status)
+    if code in NON_FAILOVER_HTTP_CODES:
+        return False
+    if code in TRANSIENT_HTTP_CODES:
+        return True
     text = str(exc).lower()
     return any(
         marker in text
@@ -142,27 +190,49 @@ def prepare_html_for_llm(
     return skeleton, was_reduced, out_mode
 
 
+def _omit_empty_strings(value: Any) -> Any:
+    """Убирает пустые строки из JSON, не трогая списки и значащие поля."""
+    if isinstance(value, dict):
+        return {
+            key: _omit_empty_strings(item)
+            for key, item in value.items()
+            if item != ""
+        }
+    if isinstance(value, list):
+        return [_omit_empty_strings(item) for item in value]
+    return value
+
+
 def build_page_payload(
     page_data: PageData,
     *,
     html_mode: str | None = None,
 ) -> dict[str, Any]:
-    """Сериализует PageData для user-сообщения без скриншотов и без ключей."""
-    payload = page_data.model_dump(mode="json")
-    html = payload.get("html") or ""
-    prepared_html, was_reduced, mode = prepare_html_for_llm(html, mode=html_mode)
+    """
+    Сериализует PageData для LLM: полный visible_text, полный desktop/mobile
+    layout и компактный semantic HTML skeleton вместо сырого HTML.
+    """
+    payload = page_data.model_dump(mode="json", exclude_none=True)
+    raw_html = payload.get("html") or ""
+    prepared_html, was_reduced, mode = prepare_html_for_llm(raw_html, mode=html_mode)
     payload["html"] = prepared_html
     # Совместимость с промптом: флаг означает «HTML уплотнён для лимита запроса».
     payload["html_truncated"] = was_reduced
     payload["html_mode"] = mode
-    if was_reduced or mode.startswith("skeleton") or mode == "head_tail":
-        logger.warning(
-            "Page HTML prepared for LLM: mode=%s url=%s original_len=%s kept_len=%s",
-            mode,
-            page_data.url,
-            len(html),
-            len(prepared_html),
-        )
+    for layout_key in ("layout_desktop", "layout_mobile"):
+        if layout_key in payload:
+            payload[layout_key] = _omit_empty_strings(payload[layout_key])
+    logger.info(
+        "Page payload for LLM: mode=%s url=%s raw_html=%s skeleton_html=%s "
+        "visible_text=%s layout_desktop=%s layout_mobile=%s",
+        mode,
+        page_data.url,
+        len(raw_html),
+        len(prepared_html),
+        len(page_data.visible_text or ""),
+        len(json.dumps(payload.get("layout_desktop") or {}, ensure_ascii=False)),
+        len(json.dumps(payload.get("layout_mobile") or {}, ensure_ascii=False)),
+    )
     return payload
 
 
@@ -172,10 +242,17 @@ def build_analysis_user_message(
     html_mode: str | None = None,
 ) -> str:
     user_payload = build_page_payload(page_data, html_mode=html_mode)
+    dumped = json.dumps(user_payload, ensure_ascii=False, separators=(",", ":"))
+    logger.info(
+        "LLM user message chars=%s url=%s html_mode=%s",
+        len(dumped),
+        page_data.url,
+        user_payload.get("html_mode"),
+    )
     return (
         "Проанализируй лендинг строго по системному промпту и верни только "
         "JSON по схеме LlmAgentResult (без numeric overall/block score).\n\n"
-        f"Данные страницы (JSON):\n{json.dumps(user_payload, ensure_ascii=False)}"
+        f"Данные страницы (JSON):\n{dumped}"
     )
 
 
