@@ -84,6 +84,64 @@ def test_build_page_payload_keeps_visible_text_and_layout_full():
     assert "window.TRACK" not in payload["html"]
 
 
+def test_build_page_payload_drops_unused_layout_css_and_caps_links():
+    from app.agent.common import LAYOUT_LINK_CAP
+    from app.page_collector.models import HeadingItem, LinkItem
+
+    links = [
+        LinkItem(
+            tag="a",
+            text=f"link-{i}",
+            href=f"https://example.com/{i}",
+            x=1.234,
+            y=2.345,
+            width=10.0,
+            height=10.0,
+            page_x=1.234,
+            page_y=2.345,
+            visible=True,
+            in_viewport=i < 3,
+            color="rgb(0,0,0)",
+            background_color="rgb(255,255,255)",
+            display="block",
+            opacity="1",
+        )
+        for i in range(LAYOUT_LINK_CAP + 20)
+    ]
+    page = PageData(
+        url=HttpUrl("https://example.com/x"),
+        html=SAMPLE_HTML,
+        visible_text="FULL TEXT MIDDLE AND FOOTER",
+        layout_desktop=LayoutSnapshot(
+            viewport=ViewportSize(width=1280, height=800),
+            headings=[
+                HeadingItem(
+                    tag="h1",
+                    text="Offer",
+                    level=1,
+                    x=0,
+                    y=0,
+                    width=100,
+                    height=40,
+                    page_x=0,
+                    page_y=0,
+                    visible=True,
+                    in_viewport=True,
+                    color="#111",
+                )
+            ],
+            links=links,
+        ),
+        layout_mobile=LayoutSnapshot(viewport=ViewportSize(width=390, height=844)),
+    )
+    payload = build_page_payload(page)
+    heading = payload["layout_desktop"]["headings"][0]
+    assert heading["text"] == "Offer"
+    assert "color" not in heading
+    assert len(payload["layout_desktop"]["links"]) == LAYOUT_LINK_CAP
+    assert payload["visible_text"] == "FULL TEXT MIDDLE AND FOOTER"
+
+
 def test_truncate_html_for_llm_still_keeps_head_and_tail():
     huge = "HEAD" + ("m" * 200_000) + "TAIL"
     out, truncated = truncate_html_for_llm(huge, limit=1000)

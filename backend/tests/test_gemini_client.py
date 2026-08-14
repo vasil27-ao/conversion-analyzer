@@ -49,9 +49,19 @@ def _client_with_mock_response(response: object) -> GeminiAgentClient:
 
 
 def test_load_system_prompt_reads_file():
+    from app.agent.common import compact_system_prompt
+
     text = load_system_prompt(DEFAULT_SYSTEM_PROMPT_PATH)
+    raw = DEFAULT_SYSTEM_PROMPT_PATH.read_text(encoding="utf-8")
     assert "агент-аналитик" in text.lower() or "чек-лист" in text.lower()
     assert "LlmAgentResult" in text
+    assert "1.1" in text and "6.1" in text
+    assert "N/A" in text
+    compact = compact_system_prompt(raw)
+    assert len(compact) < len(raw)
+    assert compact.startswith("## 1. Роль")
+    for cid in ("1.1", "1.3", "3.1", "3.2", "4.1", "5.1", "6.1"):
+        assert cid in compact
 
 
 def test_missing_api_key_raises_config_error():
