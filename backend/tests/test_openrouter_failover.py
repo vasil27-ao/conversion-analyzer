@@ -173,6 +173,7 @@ def test_build_agent_client_gemini_rotates_two_models_without_other_keys():
         gemini_api_key="gemini-test-key",
         gemini_model="gemini-3.6-flash",
         gemini_model_fallback="gemini-2.5-flash",
+        openai_api_key="",
         openrouter_api_key="",
         groq_api_key="",
     )
@@ -190,6 +191,7 @@ def test_build_agent_client_gemini_chain_includes_openrouter_and_groq():
         gemini_api_key="gemini-test-key",
         gemini_model="gemini-3.6-flash",
         gemini_model_fallback="gemini-2.5-flash",
+        openai_api_key="",
         openrouter_api_key="openrouter-test-key",
         groq_api_key="groq-test-key",
     )
@@ -200,6 +202,72 @@ def test_build_agent_client_gemini_chain_includes_openrouter_and_groq():
     assert names[1].startswith("gemini:")
     assert names[2].startswith("openrouter:")
     assert names[3].startswith("groq:")
+
+
+def test_build_agent_client_puts_openai_first_when_key_set():
+    from app.agent.openai_client import OpenAIAgentClient
+
+    settings = Settings(
+        _env_file=None,
+        agent_impl="gemini",
+        openai_api_key="openai-test-key",
+        gemini_api_key="gemini-test-key",
+        openrouter_api_key="openrouter-test-key",
+        groq_api_key="groq-test-key",
+    )
+    client = build_agent_client(settings)
+    assert isinstance(client, FailoverAgentClient)
+    names = [name for name, _ in client._providers]
+    assert names[0] == "openai:gpt-4o"
+    assert isinstance(client._providers[0][1], OpenAIAgentClient)
+    assert names[1].startswith("gemini:")
+    assert names[2].startswith("gemini:")
+    assert names[3].startswith("openrouter:")
+    assert names[4].startswith("groq:")
+
+
+def test_build_agent_client_openai_impl_requires_key():
+    settings = Settings(
+        _env_file=None,
+        agent_impl="openai",
+        openai_api_key="",
+    )
+    with pytest.raises(AgentConfigError, match="OPENAI_API_KEY"):
+        build_agent_client(settings)
+
+
+def test_build_agent_client_openai_impl_with_free_fallbacks():
+    from app.agent.openai_client import OpenAIAgentClient
+
+    settings = Settings(
+        _env_file=None,
+        agent_impl="openai",
+        openai_api_key="openai-test-key",
+        openai_model="gpt-4o",
+        gemini_api_key="gemini-test-key",
+        groq_api_key="groq-test-key",
+    )
+    client = build_agent_client(settings)
+    names = [name for name, _ in client._providers]
+    assert names[0] == "openai:gpt-4o"
+    assert isinstance(client._providers[0][1], OpenAIAgentClient)
+    assert any(name.startswith("gemini:") for name in names)
+    assert names[-1].startswith("groq:")
+
+
+def test_build_agent_client_gemini_works_with_only_openai_key():
+    settings = Settings(
+        _env_file=None,
+        agent_impl="gemini",
+        openai_api_key="openai-test-key",
+        gemini_api_key="",
+        openrouter_api_key="",
+        groq_api_key="",
+    )
+    client = build_agent_client(settings)
+    assert isinstance(client, FailoverAgentClient)
+    assert len(client._providers) == 1
+    assert client._providers[0][0] == "openai:gpt-4o"
 
 
 def test_build_agent_client_groq_only():
@@ -222,6 +290,7 @@ def test_build_agent_client_wraps_gemini_with_failover_when_openrouter_key_set()
         _env_file=None,
         agent_impl="gemini",
         gemini_api_key="gemini-test-key",
+        openai_api_key="",
         openrouter_api_key="openrouter-test-key",
     )
     client = build_agent_client(settings)

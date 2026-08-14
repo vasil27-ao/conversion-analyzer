@@ -18,8 +18,9 @@ python -m venv .venv
 pip install -r requirements.txt
 python -m playwright install chromium
 copy .env.example .env
-# заполнить GEMINI_API_KEY; AGENT_IMPL=gemini
-# опционально OPENROUTER_API_KEY / GROQ_API_KEY — запасные free LLM при сбое Gemini
+# заполнить OPENAI_API_KEY (основной платный GPT) и/или GEMINI_API_KEY
+# AGENT_IMPL=gemini — GPT станет первым, как только задан OPENAI_API_KEY
+# опционально OPENROUTER_API_KEY / GROQ_API_KEY — запасные free LLM
 
 uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
@@ -33,8 +34,10 @@ CORS по умолчанию разрешён для локального Vite (
 1. Создайте проект на [railway.app](https://railway.app), подключите этот GitHub-репозиторий.
 2. Root Directory / service path: `backend` (рядом лежат `Dockerfile` и `railway.toml`).
 3. Задайте переменные окружения:
-   - `GEMINI_API_KEY` — секрет
-   - `AGENT_IMPL=gemini`
+   - `OPENAI_API_KEY` — секрет платного GPT (основной провайдер, https://platform.openai.com/api-keys)
+   - `OPENAI_MODEL=gpt-4o` — опционально
+   - `AGENT_IMPL=gemini` (или `openai`; при ключе OpenAI GPT всё равно первый)
+   - `GEMINI_API_KEY` — секрет, запасной free LLM
    - `GEMINI_MODEL_FALLBACK=gemini-2.5-flash` — вторая free Gemini в ротации
    - `OPENROUTER_API_KEY` — опционально, запасной LLM (https://openrouter.ai/keys)
    - `OPENROUTER_MODEL=google/gemma-4-31b-it:free` — актуальный `:free` slug

@@ -16,9 +16,15 @@ class Settings(BaseSettings):
 
     app_env: str = "development"
 
-    # Какая реализация AgentClient: "mock" | "gemini" | "openrouter" | "groq".
-    # При gemini + ключах OpenRouter/Groq собирается цепочка failover.
+    # Какая реализация AgentClient: "mock" | "openai" | "gemini" | "openrouter" | "groq".
+    # При gemini/openai + ключах собирается цепочка failover.
+    # Если задан OPENAI_API_KEY, платный GPT всегда первый в цепочке.
     agent_impl: str = "mock"
+
+    # OpenAI (платный GPT). Ключ только из .env; в логи не писать.
+    openai_api_key: str = ""
+    openai_model: str = "gpt-4o"
+    openai_base_url: str = "https://api.openai.com/v1"
 
     # Gemini. Ключ только из .env; в логи не писать.
     gemini_api_key: str = ""

@@ -24,7 +24,7 @@ python -m venv .venv
 pip install -r requirements.txt
 python -m playwright install chromium
 copy .env.example .env
-# заполнить GEMINI_API_KEY
+# заполнить OPENAI_API_KEY (основной GPT) и/или GEMINI_API_KEY
 # для реального агента: AGENT_IMPL=gemini
 
 uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
@@ -52,8 +52,10 @@ Dev-сервер проксирует `/api` на backend. Для прямых �
 
 | Переменная | Назначение |
 |---|---|
-| `GEMINI_API_KEY` | ключ Gemini (секрет) |
-| `AGENT_IMPL` | `gemini` или `mock` |
+| `OPENAI_API_KEY` | ключ платного GPT (секрет); если задан — GPT основной провайдер |
+| `OPENAI_MODEL` | опционально, по умолчанию `gpt-4o` |
+| `GEMINI_API_KEY` | ключ Gemini (секрет), запасной free LLM |
+| `AGENT_IMPL` | `openai`, `gemini` или `mock` |
 | `GEMINI_MODEL` | опционально, по умолчанию `gemini-3.6-flash` |
 | `SQLITE_PATH` | путь к SQLite |
 | `CORS_ORIGINS` | origins через запятую (локальный Vite + URL Vercel) |
